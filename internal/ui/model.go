@@ -562,7 +562,11 @@ func (m *Model) renderPane(title string, lines []string, width, height int, focu
 		if focused && m.focus == detailFocus && index == m.currentMatchLine() {
 			line = lipgloss.NewStyle().Background(lipgloss.Color("220")).Foreground(lipgloss.Color("0")).Render(line)
 		} else if focused && index == selected {
-			line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Render("› " + clip(line, max(1, innerWidth-2)))
+			if m.focus == workspaceFocus {
+				line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Background(lipgloss.Color("235")).Bold(true).Render(line)
+			} else {
+				line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Render("› " + clip(line, max(1, innerWidth-2)))
+			}
 		}
 		rows = append(rows, line)
 	}

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Max-0e/lazykcp/internal/kcp"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
@@ -92,5 +93,28 @@ func TestSidebarSlashFilterInput(t *testing.T) {
 	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if model.filters[resourceFocus] != "po" {
 		t.Fatalf("resource filter = %q, want %q", model.filters[resourceFocus], "po")
+	}
+}
+
+func TestWorkspaceSelectionHighlightDoesNotShiftTreeRows(t *testing.T) {
+	model := testModel(t)
+	model.root.loaded = true
+	model.root.expanded = true
+	model.root.children = []*workspaceNode{
+		{name: "team", path: "root:team", loaded: true, expanded: true},
+	}
+	model.workspaceCursor = "root:team"
+	model.activeWorkspace = "root:team"
+	model.focus = workspaceFocus
+
+	selected := ansi.Strip(model.renderPane("Workspaces", model.workspaceLines(), 32, 8, true))
+	model.focus = resourceFocus
+	unselected := ansi.Strip(model.renderPane("Workspaces", model.workspaceLines(), 32, 8, false))
+
+	if selected != unselected {
+		t.Fatalf("workspace selection changed row text or alignment:\nselected:\n%s\nunselected:\n%s", selected, unselected)
+	}
+	if !strings.Contains(selected, "  - team *") {
+		t.Fatalf("selected workspace row lost its tree marker or label: %s", selected)
 	}
 }
