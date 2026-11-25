@@ -22,6 +22,19 @@ const (
 	detailFocus
 )
 
+type viewLayout struct {
+	workspaceHeight  int
+	navigationWidth  int
+	resourceHeight   int
+	instanceHeight   int
+	narrow           bool
+	navigationHeight int
+	resourceWidth    int
+	instanceWidth    int
+	detailWidth      int
+	detailHeight     int
+}
+
 type workspaceNode struct {
 	name     string
 	path     string
@@ -195,42 +208,31 @@ func (m *Model) View() string {
 		appendHeader("  "+m.status, lipgloss.NewStyle().Foreground(lipgloss.Color("196")))
 	}
 
-	paneWidth := m.width
-	paneAreaHeight := m.height - 2
-	workspaceHeight := clamp(paneAreaHeight/5, 5, 7)
-	if workspaceHeight > paneAreaHeight-7 {
-		workspaceHeight = paneAreaHeight - 7
-	}
-	lowerHeight := paneAreaHeight - workspaceHeight
-	workspacePane := m.renderPane("Workspaces", m.workspaceLines(), paneWidth, workspaceHeight, m.focus == workspaceFocus)
+	layout := m.layoutForView()
+	workspacePane := m.renderPane("Workspaces", m.workspaceLines(), m.width, layout.workspaceHeight, m.focus == workspaceFocus)
 	var lowerPane string
 	if m.detailOnly {
-		lowerPane = m.renderPane(m.detailTitle(), m.detailLines(), paneWidth, lowerHeight, m.focus == detailFocus)
-	} else if paneWidth >= 80 {
-		navigationWidth := clamp(paneWidth*28/100, 20, 36)
-		resourceHeight := lowerHeight / 2
-		instanceHeight := lowerHeight - resourceHeight
+		lowerPane = m.renderPane(m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
+	} else if !layout.narrow {
 		navigationPane := lipgloss.JoinVertical(
 			lipgloss.Left,
-			m.renderPane("API resources", m.resourceLines(), navigationWidth, resourceHeight, m.focus == resourceFocus),
-			m.renderPane("Instances", m.instanceLines(), navigationWidth, instanceHeight, m.focus == instanceFocus),
+			m.renderPane("API resources", m.resourceLines(), layout.navigationWidth, layout.resourceHeight, m.focus == resourceFocus),
+			m.renderPane("Instances", m.instanceLines(), layout.navigationWidth, layout.instanceHeight, m.focus == instanceFocus),
 		)
-		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), paneWidth-navigationWidth, lowerHeight, m.focus == detailFocus)
+		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 		lowerPane = lipgloss.JoinHorizontal(lipgloss.Top, navigationPane, detailPane)
 	} else {
-		navigationHeight := min(max(4, lowerHeight/3), lowerHeight-3)
-		resourceWidth := paneWidth / 2
 		navigationPane := lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			m.renderPane("API resources", m.resourceLines(), resourceWidth, navigationHeight, m.focus == resourceFocus),
-			m.renderPane("Instances", m.instanceLines(), paneWidth-resourceWidth, navigationHeight, m.focus == instanceFocus),
+			m.renderPane("API resources", m.resourceLines(), layout.resourceWidth, layout.navigationHeight, m.focus == resourceFocus),
+			m.renderPane("Instances", m.instanceLines(), layout.instanceWidth, layout.navigationHeight, m.focus == instanceFocus),
 		)
-		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), paneWidth, lowerHeight-navigationHeight, m.focus == detailFocus)
+		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane)
 	}
-	help := "j/k:move tab:focus enter:select /:filter v:nav q:quit"
+	help := "j/k move ^D/^U half-page tab focus enter select / filter v nav q quit"
 	if m.width >= 90 {
-		help = "↑/k ↓/j move  ←/h →/l focus/expand  enter select  / filter/search  tab focus  "
+		help = "↑/k ↓/j move  Ctrl+D/U half-page  ←/h →/l focus/expand  enter select  / filter  tab focus  "
 		if m.detailOnly {
 			help += "v show navigation  "
 		} else {
@@ -248,7 +250,7 @@ func (m *Model) View() string {
 	} else if m.searching {
 		help = "Search: /" + m.searchText + "  enter close  esc cancel"
 	} else if m.focus == detailFocus {
-		help += "  n/N next/previous  [/] or 1/2 JSON/YAML"
+		help += "  n/N next/previous  1/2 JSON/YAML"
 	}
 	if lipgloss.Width(help) > m.width {
 		help = clip(help, m.width)
@@ -256,6 +258,60 @@ func (m *Model) View() string {
 	return header + "\n" +
 		lipgloss.JoinVertical(lipgloss.Left, workspacePane, lowerPane) + "\n" +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(help)
+}
+
+func (m *Model) layoutForView() viewLayout {
+	paneAreaHeight := m.height - 2
+	workspaceHeight := clamp(paneAreaHeight/5, 5, 7)
+	if workspaceHeight > paneAreaHeight-7 {
+		workspaceHeight = paneAreaHeight - 7
+	}
+	lowerHeight := paneAreaHeight - workspaceHeight
+	layout := viewLayout{
+		workspaceHeight: workspaceHeight,
+		detailWidth:     m.width,
+		detailHeight:    lowerHeight,
+	}
+	if m.detailOnly {
+		return layout
+	}
+	if m.width >= 80 {
+		layout.navigationWidth = clamp(m.width*28/100, 20, 36)
+		layout.resourceHeight = lowerHeight / 2
+		layout.instanceHeight = lowerHeight - layout.resourceHeight
+		layout.detailWidth = m.width - layout.navigationWidth
+		return layout
+	}
+	layout.narrow = true
+	layout.navigationHeight = min(max(4, lowerHeight/3), lowerHeight-3)
+	layout.resourceWidth = m.width / 2
+	layout.instanceWidth = m.width - layout.resourceWidth
+	layout.detailHeight = lowerHeight - layout.navigationHeight
+	return layout
+}
+
+func (m *Model) paneVisibleRows(panel focus) int {
+	layout := m.layoutForView()
+	var height int
+	switch panel {
+	case workspaceFocus:
+		height = layout.workspaceHeight
+	case resourceFocus:
+		if layout.narrow {
+			height = layout.navigationHeight
+		} else {
+			height = layout.resourceHeight
+		}
+	case instanceFocus:
+		if layout.narrow {
+			height = layout.navigationHeight
+		} else {
+			height = layout.instanceHeight
+		}
+	case detailFocus:
+		height = layout.detailHeight
+	}
+	return max(1, height-3)
 }
 
 func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
@@ -268,6 +324,10 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 	switch key.Type {
 	case tea.KeyCtrlC:
 		return tea.Quit
+	case tea.KeyCtrlD:
+		return m.pageMove(1)
+	case tea.KeyCtrlU:
+		return m.pageMove(-1)
 	case tea.KeyTab:
 		m.changeFocus(1)
 		return nil
@@ -417,6 +477,16 @@ func (m *Model) move(delta int) tea.Cmd {
 		m.scroll = max(0, m.scroll+delta)
 	}
 	return nil
+}
+
+func (m *Model) pageMove(direction int) tea.Cmd {
+	step := max(1, m.paneVisibleRows(m.focus)/2)
+	if m.focus == detailFocus {
+		maxScroll := max(0, len(m.detailLines())-m.paneVisibleRows(detailFocus))
+		m.scroll = clamp(m.scroll+direction*step, 0, maxScroll)
+		return nil
+	}
+	return m.move(direction * step)
 }
 
 func (m *Model) changeFocus(delta int) {
