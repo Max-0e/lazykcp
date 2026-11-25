@@ -43,6 +43,11 @@ type paneBounds struct {
 	height int
 }
 
+const (
+	detailTabWidth      = 6
+	detailTabGroupWidth = 13
+)
+
 type workspaceNode struct {
 	name     string
 	path     string
@@ -408,6 +413,11 @@ func (m *Model) handleMouse(mouse tea.MouseMsg) tea.Cmd {
 	}
 	m.focus = bounds.panel
 	if bounds.panel == detailFocus {
+		if mouse.Y == bounds.y && m.selectedInstance != nil {
+			if tab, ok := detailTabAt(bounds, mouse.X); ok {
+				m.setDetailTab(tab)
+			}
+		}
 		return nil
 	}
 
@@ -848,14 +858,16 @@ func (m *Model) detailLines() []string {
 func (m *Model) renderPane(panel focus, title string, lines []string, width, height int, focused bool) string {
 	innerWidth := max(1, width-2)
 	innerHeight := max(1, height-2)
-	if title == m.detailTitle() && m.selectedInstance != nil {
-		title = "[" + title + "]"
+	showTabs := panel == detailFocus && m.selectedInstance != nil
+	if showTabs {
+		title = m.selectedInstance.GetName()
 	}
 	if len(lines) == 0 {
 		lines = []string{" "}
 	}
 	selected := m.selectedLineIndex(panel)
 	start := m.paneRenderStart(panel, len(lines), innerHeight)
+	thumbStart, thumbHeight, scrollable := scrollThumb(start, innerHeight, len(lines))
 	rows := make([]string, 0, innerHeight)
 	borderColor := lipgloss.Color("240")
 	titleColor := lipgloss.Color("252")
@@ -866,11 +878,21 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 	border := lipgloss.RoundedBorder()
 	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
 	titleStyle := lipgloss.NewStyle().Foreground(titleColor).Bold(true)
-	label := clip(" "+title+" ", innerWidth)
-	topFill := max(0, innerWidth-lipgloss.Width(label))
+	titleWidth := innerWidth
+	tabsWidth := 0
+	if showTabs {
+		titleWidth = max(0, innerWidth-detailTabGroupWidth)
+		tabsWidth = detailTabGroupWidth
+	}
+	label := clip(" "+title+" ", titleWidth)
+	topFill := max(0, innerWidth-lipgloss.Width(label)-tabsWidth)
 	top := borderStyle.Render(border.TopLeft) +
 		titleStyle.Render(label) +
-		borderStyle.Render(strings.Repeat(border.Top, topFill)+border.TopRight)
+		borderStyle.Render(strings.Repeat(border.Top, topFill))
+	if showTabs {
+		top += m.renderDetailTabs(borderStyle)
+	}
+	top += borderStyle.Render(border.TopRight)
 	for row := 0; row < innerHeight; row++ {
 		index := start + row
 		line := ""
@@ -889,10 +911,63 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 				line = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("238")).Bold(true).Render(line)
 			}
 		}
-		rows = append(rows, borderStyle.Render(border.Left)+line+borderStyle.Render(border.Right))
+		rightBorder := border.Right
+		rightStyle := borderStyle
+		if scrollable {
+			rightBorder = "┆"
+			if row >= thumbStart && row < thumbStart+thumbHeight {
+				rightBorder = "█"
+				rightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+			}
+		}
+		rows = append(rows, borderStyle.Render(border.Left)+line+rightStyle.Render(rightBorder))
 	}
 	bottom := borderStyle.Render(border.BottomLeft + strings.Repeat(border.Bottom, innerWidth) + border.BottomRight)
 	return top + "\n" + strings.Join(rows, "\n") + "\n" + bottom
+}
+
+func (m *Model) renderDetailTabs(borderStyle lipgloss.Style) string {
+	active := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("205")).Bold(true)
+	inactive := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	jsonTab := inactive
+	yamlTab := inactive
+	jsonLabel := " JSON "
+	yamlLabel := " YAML "
+	if m.detailTab == 0 {
+		jsonTab = active
+		jsonLabel = "[JSON]"
+	} else {
+		yamlTab = active
+		yamlLabel = "[YAML]"
+	}
+	return jsonTab.Render(jsonLabel) +
+		borderStyle.Render("|") +
+		yamlTab.Render(yamlLabel)
+}
+
+func detailTabAt(bounds paneBounds, x int) (int, bool) {
+	start := bounds.x + 1 + max(0, bounds.width-2-detailTabGroupWidth)
+	offset := x - start
+	switch {
+	case offset >= 0 && offset < detailTabWidth:
+		return 0, true
+	case offset >= detailTabWidth+1 && offset < detailTabGroupWidth:
+		return 1, true
+	default:
+		return 0, false
+	}
+}
+
+func scrollThumb(start, visibleRows, lineCount int) (top, height int, scrollable bool) {
+	if visibleRows <= 0 || lineCount <= visibleRows {
+		return 0, 0, false
+	}
+	height = max(1, visibleRows*visibleRows/lineCount)
+	height = min(height, visibleRows)
+	maxStart := lineCount - visibleRows
+	start = clamp(start, 0, maxStart)
+	top = start * (visibleRows - height) / maxStart
+	return top, height, true
 }
 
 func (m *Model) selectedLineIndex(panel focus) int {
