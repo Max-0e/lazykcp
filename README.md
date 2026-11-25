@@ -12,6 +12,14 @@ go run . --kubeconfig ~/.kube/config
 
 If `--kubeconfig` is omitted, the standard Kubernetes client-go kubeconfig loading rules are used.
 
+For a local kcp endpoint with a self-signed certificate, you can explicitly bypass certificate verification:
+
+```sh
+go run . --kubeconfig ~/.kube/config --insecure-skip-tls-verify
+```
+
+This option is off by default. It keeps traffic encrypted but disables verification of the server's identity, making connections vulnerable to interception. When enabled, any CA configured in kubeconfig is ignored. Prefer configuring the certificate authority in kubeconfig, and use the bypass only for local development.
+
 ## Navigation
 
 - Select a workspace, resource, or instance with `Enter`; use `Right`/`l` to expand a workspace and `Left`/`h` to collapse or move to its parent.

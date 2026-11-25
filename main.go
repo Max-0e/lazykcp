@@ -12,9 +12,10 @@ import (
 
 func main() {
 	kubeconfig := flag.String("kubeconfig", "", "Path to a kubeconfig file (defaults to the standard kubeconfig loading rules)")
+	insecureSkipTLSVerify := flag.Bool("insecure-skip-tls-verify", false, "Skip TLS certificate verification (unsafe; for local development only)")
 	flag.Parse()
 
-	client, err := kcp.NewClient(*kubeconfig)
+	client, err := kcp.NewClient(*kubeconfig, *insecureSkipTLSVerify)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

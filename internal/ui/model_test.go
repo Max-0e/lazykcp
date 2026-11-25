@@ -32,7 +32,7 @@ current-context: admin@kcp
 	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	client, err := kcp.NewClient(path)
+	client, err := kcp.NewClient(path, false)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
 	}

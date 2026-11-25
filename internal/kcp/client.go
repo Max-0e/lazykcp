@@ -35,10 +35,15 @@ type Client struct {
 	rootPath string
 }
 
-func NewClient(kubeconfigPath string) (*Client, error) {
+func NewClient(kubeconfigPath string, insecureSkipTLSVerify bool) (*Client, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("load kubeconfig: %w", err)
+	}
+	config.TLSClientConfig.Insecure = insecureSkipTLSVerify
+	if insecureSkipTLSVerify {
+		config.TLSClientConfig.CAFile = ""
+		config.TLSClientConfig.CAData = nil
 	}
 	rootPath, err := workspacePathFromHost(config.Host)
 	if err != nil {
