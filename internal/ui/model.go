@@ -219,25 +219,25 @@ func (m *Model) View() string {
 	}
 
 	layout := m.layoutForView()
-	workspacePane := m.renderPane("Workspaces", m.workspaceLines(), m.width, layout.workspaceHeight, m.focus == workspaceFocus)
+	workspacePane := m.renderPane(workspaceFocus, "Workspaces", m.workspaceLines(), m.width, layout.workspaceHeight, m.focus == workspaceFocus)
 	var lowerPane string
 	if m.detailOnly {
-		lowerPane = m.renderPane(m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
+		lowerPane = m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 	} else if !layout.narrow {
 		navigationPane := lipgloss.JoinVertical(
 			lipgloss.Left,
-			m.renderPane("API resources", m.resourceLines(), layout.navigationWidth, layout.resourceHeight, m.focus == resourceFocus),
-			m.renderPane("Instances", m.instanceLines(), layout.navigationWidth, layout.instanceHeight, m.focus == instanceFocus),
+			m.renderPane(resourceFocus, "API resources", m.resourceLines(), layout.navigationWidth, layout.resourceHeight, m.focus == resourceFocus),
+			m.renderPane(instanceFocus, "Instances", m.instanceLines(), layout.navigationWidth, layout.instanceHeight, m.focus == instanceFocus),
 		)
-		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
+		detailPane := m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 		lowerPane = lipgloss.JoinHorizontal(lipgloss.Top, navigationPane, detailPane)
 	} else {
 		navigationPane := lipgloss.JoinHorizontal(
 			lipgloss.Top,
-			m.renderPane("API resources", m.resourceLines(), layout.resourceWidth, layout.navigationHeight, m.focus == resourceFocus),
-			m.renderPane("Instances", m.instanceLines(), layout.instanceWidth, layout.navigationHeight, m.focus == instanceFocus),
+			m.renderPane(resourceFocus, "API resources", m.resourceLines(), layout.resourceWidth, layout.navigationHeight, m.focus == resourceFocus),
+			m.renderPane(instanceFocus, "Instances", m.instanceLines(), layout.instanceWidth, layout.navigationHeight, m.focus == instanceFocus),
 		)
-		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
+		detailPane := m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane)
 	}
 	help := "j/k move ^D/^U page enter select / filter tab focus v nav mouse"
@@ -315,7 +315,7 @@ func (m *Model) paneVisibleRows(panel focus) int {
 	case detailFocus:
 		height = layout.detailHeight
 	}
-	return max(1, height-3)
+	return max(1, height-2)
 }
 
 func (m *Model) paneBoundsAt(x, y int) (paneBounds, bool) {
@@ -411,7 +411,7 @@ func (m *Model) handleMouse(mouse tea.MouseMsg) tea.Cmd {
 		return nil
 	}
 
-	row := mouse.Y - bounds.y - 2
+	row := mouse.Y - bounds.y - 1
 	index := start + row
 	if row < 0 || row >= visibleRows || index < 0 || index >= len(lines) {
 		return nil
@@ -459,13 +459,10 @@ func (m *Model) linesForPanel(panel focus) []string {
 }
 
 func (m *Model) paneRenderStart(panel focus, lineCount, visibleRows int) int {
-	if m.focus != panel {
-		return 0
-	}
 	if panel == detailFocus {
 		return clamp(m.scroll, 0, max(0, lineCount-visibleRows))
 	}
-	selected := m.selectedLineIndex()
+	selected := m.selectedLineIndex(panel)
 	if selected >= visibleRows {
 		return selected - visibleRows + 1
 	}
@@ -846,64 +843,78 @@ func (m *Model) detailLines() []string {
 	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
 }
 
-func (m *Model) renderPane(title string, lines []string, width, height int, focused bool) string {
+func (m *Model) renderPane(panel focus, title string, lines []string, width, height int, focused bool) string {
 	innerWidth := max(1, width-2)
-	innerHeight := max(1, height-3)
-	titleStyle := lipgloss.NewStyle().Bold(true)
-	if focused {
-		titleStyle = titleStyle.Bold(true).Foreground(lipgloss.Color("205"))
-	}
+	innerHeight := max(1, height-2)
 	if title == m.detailTitle() && m.selectedInstance != nil {
 		title = "[" + title + "]"
 	}
-	rows := make([]string, 0, innerHeight)
 	if len(lines) == 0 {
 		lines = []string{" "}
 	}
-	selected := m.selectedLineIndex()
-	start := 0
-	if focused {
-		start = m.paneRenderStart(m.focus, len(lines), innerHeight)
-	}
-	for row := 0; row < innerHeight; row++ {
-		index := start + row
-		if index >= len(lines) {
-			rows = append(rows, "")
-			continue
-		}
-		line := clip(lines[index], innerWidth)
-		if focused && m.focus == detailFocus && index == m.currentMatchLine() {
-			line = lipgloss.NewStyle().Background(lipgloss.Color("220")).Foreground(lipgloss.Color("0")).Render(line)
-		} else if focused && index == selected {
-			if m.focus == workspaceFocus {
-				line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Background(lipgloss.Color("235")).Bold(true).Render(line)
-			} else {
-				line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Render("› " + clip(line, max(1, innerWidth-2)))
-			}
-		}
-		rows = append(rows, line)
-	}
-	content := titleStyle.Render(title) + "\n" + strings.Join(rows, "\n")
+	selected := m.selectedLineIndex(panel)
+	start := m.paneRenderStart(panel, len(lines), innerHeight)
+	rows := make([]string, 0, innerHeight)
 	borderColor := lipgloss.Color("240")
+	titleColor := lipgloss.Color("252")
 	if focused {
 		borderColor = lipgloss.Color("205")
+		titleColor = lipgloss.Color("205")
 	}
-	return lipgloss.NewStyle().
-		Width(innerWidth).
-		Height(innerHeight + 1).
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Render(content)
+	border := lipgloss.RoundedBorder()
+	borderStyle := lipgloss.NewStyle().Foreground(borderColor)
+	titleStyle := lipgloss.NewStyle().Foreground(titleColor).Bold(true)
+	label := clip(" "+title+" ", innerWidth)
+	topFill := max(0, innerWidth-lipgloss.Width(label))
+	top := borderStyle.Render(border.TopLeft) +
+		titleStyle.Render(label) +
+		borderStyle.Render(strings.Repeat(border.Top, topFill)+border.TopRight)
+	for row := 0; row < innerHeight; row++ {
+		index := start + row
+		line := ""
+		if index >= len(lines) {
+			line = ""
+		} else {
+			line = clip(lines[index], innerWidth)
+		}
+		line += strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(line)))
+		if panel == detailFocus && focused && index == m.currentMatchLine() {
+			line = lipgloss.NewStyle().Background(lipgloss.Color("220")).Foreground(lipgloss.Color("0")).Render(line)
+		} else if panel != detailFocus && index == selected {
+			if focused {
+				line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Background(lipgloss.Color("235")).Bold(true).Render(line)
+			} else {
+				line = lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Background(lipgloss.Color("238")).Bold(true).Render(line)
+			}
+		}
+		rows = append(rows, borderStyle.Render(border.Left)+line+borderStyle.Render(border.Right))
+	}
+	bottom := borderStyle.Render(border.BottomLeft + strings.Repeat(border.Bottom, innerWidth) + border.BottomRight)
+	return top + "\n" + strings.Join(rows, "\n") + "\n" + bottom
 }
 
-func (m *Model) selectedLineIndex() int {
-	switch m.focus {
+func (m *Model) selectedLineIndex(panel focus) int {
+	switch panel {
 	case workspaceFocus:
-		return m.workspaceIndex(m.filteredWorkspaces())
+		items := m.filteredWorkspaces()
+		for i, item := range items {
+			if item.path == m.workspaceCursor {
+				return i
+			}
+		}
+		return -1
 	case resourceFocus:
-		return m.resourceCursor
+		items := m.filteredResources()
+		if len(items) == 0 {
+			return -1
+		}
+		return clamp(m.resourceCursor, 0, len(items)-1)
 	case instanceFocus:
-		return m.instanceCursor
+		items := m.filteredInstances()
+		if len(items) == 0 {
+			return -1
+		}
+		return clamp(m.instanceCursor, 0, len(items)-1)
 	default:
 		return -1
 	}

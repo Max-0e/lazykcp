@@ -150,15 +150,43 @@ func TestWorkspaceSelectionHighlightDoesNotShiftTreeRows(t *testing.T) {
 	model.activeWorkspace = "root:team"
 	model.focus = workspaceFocus
 
-	selected := ansi.Strip(model.renderPane("Workspaces", model.workspaceLines(), 32, 8, true))
+	selected := ansi.Strip(model.renderPane(workspaceFocus, "Workspaces", model.workspaceLines(), 32, 8, true))
 	model.focus = resourceFocus
-	unselected := ansi.Strip(model.renderPane("Workspaces", model.workspaceLines(), 32, 8, false))
+	unselected := ansi.Strip(model.renderPane(workspaceFocus, "Workspaces", model.workspaceLines(), 32, 8, false))
 
 	if selected != unselected {
 		t.Fatalf("workspace selection changed row text or alignment:\nselected:\n%s\nunselected:\n%s", selected, unselected)
 	}
 	if !strings.Contains(selected, "  - team *") {
 		t.Fatalf("selected workspace row lost its tree marker or label: %s", selected)
+	}
+}
+
+func TestPaneLabelAndUnfocusedSelectionStayVisible(t *testing.T) {
+	model := testModel(t)
+	model.resources = make([]kcp.Resource, 10)
+	for i := range model.resources {
+		model.resources[i] = kcp.Resource{Name: fmt.Sprintf("resource-%02d", i)}
+	}
+	model.resourceCursor = 7
+	model.focus = workspaceFocus
+
+	rendered := model.renderPane(resourceFocus, "API resources", model.resourceLines(), 32, 6, false)
+	lines := strings.Split(ansi.Strip(rendered), "\n")
+	if !strings.Contains(lines[0], "API resources") {
+		t.Fatalf("pane label should be rendered in the top border: %q", lines[0])
+	}
+	if strings.Contains(lines[1], "API resources") {
+		t.Fatalf("pane label should not consume a content row: %q", lines[1])
+	}
+	if !strings.Contains(rendered, "resource-07") || strings.Contains(rendered, "resource-00") {
+		t.Fatalf("unfocused pane should keep its own selected item in view:\n%s", ansi.Strip(rendered))
+	}
+
+	model.resourceCursor = 6
+	otherSelection := model.renderPane(resourceFocus, "API resources", model.resourceLines(), 32, 6, false)
+	if rendered == otherSelection {
+		t.Fatal("changing the unfocused resource cursor should change its visible selection style")
 	}
 }
 
@@ -178,12 +206,12 @@ func TestResourceScrollingDoesNotScrollWorkspacePane(t *testing.T) {
 	model.focus = resourceFocus
 	model.resourceCursor = 10
 
-	workspacePane := ansi.Strip(model.renderPane("Workspaces", model.workspaceLines(), 32, 6, false))
+	workspacePane := ansi.Strip(model.renderPane(workspaceFocus, "Workspaces", model.workspaceLines(), 32, 6, false))
 	if !strings.Contains(workspacePane, "root *") || !strings.Contains(workspacePane, "ws-00") {
 		t.Fatalf("resource cursor scrolled the workspace pane away from its top:\n%s", workspacePane)
 	}
 
-	resourcePane := ansi.Strip(model.renderPane("API resources", model.resourceLines(), 32, 6, true))
+	resourcePane := ansi.Strip(model.renderPane(resourceFocus, "API resources", model.resourceLines(), 32, 6, true))
 	if !strings.Contains(resourcePane, "resource-10") || strings.Contains(resourcePane, "resource-00") {
 		t.Fatalf("focused resource pane did not follow its own cursor:\n%s", resourcePane)
 	}
@@ -310,8 +338,8 @@ func TestCtrlDUPMovesListSelectionsByHalfPane(t *testing.T) {
 
 	model.focus = instanceFocus
 	model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlD})
-	if model.instanceCursor != 6 {
-		t.Fatalf("instance cursor after Ctrl+D = %d, want 6", model.instanceCursor)
+	if model.instanceCursor != 7 {
+		t.Fatalf("instance cursor after Ctrl+D = %d, want 7", model.instanceCursor)
 	}
 	model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlU})
 	if model.instanceCursor != 0 {
@@ -361,7 +389,7 @@ func TestCtrlDUsesResponsiveFocusedPaneHeight(t *testing.T) {
 
 	model.detailOnly = true
 	model.focus = detailFocus
-	if got, want := model.paneVisibleRows(detailFocus), 14; got != want {
+	if got, want := model.paneVisibleRows(detailFocus), 15; got != want {
 		t.Fatalf("detail-only visible rows = %d, want %d", got, want)
 	}
 }
@@ -439,7 +467,7 @@ func TestMouseClicksActivateListItems(t *testing.T) {
 	lowerY := 1 + layout.workspaceHeight
 	command := sendMouse(model, tea.MouseMsg{
 		X:      1,
-		Y:      lowerY + 3,
+		Y:      lowerY + 2,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	})
@@ -454,7 +482,7 @@ func TestMouseClicksActivateListItems(t *testing.T) {
 		{Object: map[string]interface{}{"metadata": map[string]interface{}{"name": "first"}}},
 		{Object: map[string]interface{}{"metadata": map[string]interface{}{"name": "second"}}},
 	}
-	instanceY := lowerY + layout.resourceHeight + 3
+	instanceY := lowerY + layout.resourceHeight + 2
 	sendMouse(model, tea.MouseMsg{
 		X:      1,
 		Y:      instanceY,
@@ -483,7 +511,7 @@ func TestMouseClickWorkspaceMarkerAndRow(t *testing.T) {
 	model.root.children = []*workspaceNode{child}
 	markerClick := tea.MouseMsg{
 		X:      3,
-		Y:      1 + 2 + 1,
+		Y:      1 + 1 + 1,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	}
@@ -518,7 +546,7 @@ func TestMouseClickUsesNarrowLayoutCoordinates(t *testing.T) {
 	lowerY := 1 + layout.workspaceHeight
 	sendMouse(model, tea.MouseMsg{
 		X:      1,
-		Y:      lowerY + 2,
+		Y:      lowerY + 1,
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	})
