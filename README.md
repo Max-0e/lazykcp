@@ -22,9 +22,12 @@ This option is off by default. It keeps traffic encrypted but disables verificat
 
 ## Navigation
 
+- The workspace tree spans the top. Below it, API resources and instances share a narrow navigation rail beside the detail view. On narrower terminals, those navigation panes move above the full-width detail view.
+- The UI needs at least a 40x16 terminal; narrower layouts are supported above that size.
 - Select a workspace, resource, or instance with `Enter`; use `Right`/`l` to expand a workspace and `Left`/`h` to collapse or move to its parent.
 - Move with `j`/`k` or the arrow keys. Use `Tab`/`Shift+Tab` to change panes; `h`/`l` also changes panes outside the workspace tree.
 - Press `/` in a sidebar to filter its entries; press `/` in the detail pane to search the current representation. Use `n`/`N` to move between matches.
 - Use `1`/`[` for JSON and `2`/`]` for YAML. Press `q` to exit.
+- Press `v` to hide or restore the resource/instance navigation panes while keeping the workspace tree visible.
 
 The configured identity needs permission to list workspaces and the resources you want to inspect. Resource discovery and instance listing use the permissions available in the selected workspace. The initial version does not create, update, or delete resources.

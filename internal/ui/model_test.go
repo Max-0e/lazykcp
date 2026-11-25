@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
 
 	"github.com/Max-0e/lazykcp/internal/kcp"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
@@ -152,5 +154,113 @@ func TestWorkspaceSelectionHighlightDoesNotShiftTreeRows(t *testing.T) {
 	}
 	if !strings.Contains(selected, "  - team *") {
 		t.Fatalf("selected workspace row lost its tree marker or label: %s", selected)
+	}
+}
+
+func TestResourceScrollingDoesNotScrollWorkspacePane(t *testing.T) {
+	model := testModel(t)
+	model.root.loaded = true
+	model.root.expanded = true
+	model.activeWorkspace = model.root.path
+	for i := 0; i < 12; i++ {
+		name := fmt.Sprintf("ws-%02d", i)
+		model.root.children = append(model.root.children, &workspaceNode{
+			name: name,
+			path: model.root.path + ":" + name,
+		})
+		model.resources = append(model.resources, kcp.Resource{Name: fmt.Sprintf("resource-%02d", i)})
+	}
+	model.focus = resourceFocus
+	model.resourceCursor = 10
+
+	workspacePane := ansi.Strip(model.renderPane("Workspaces", model.workspaceLines(), 32, 6, false))
+	if !strings.Contains(workspacePane, "root *") || !strings.Contains(workspacePane, "ws-00") {
+		t.Fatalf("resource cursor scrolled the workspace pane away from its top:\n%s", workspacePane)
+	}
+
+	resourcePane := ansi.Strip(model.renderPane("API resources", model.resourceLines(), 32, 6, true))
+	if !strings.Contains(resourcePane, "resource-10") || strings.Contains(resourcePane, "resource-00") {
+		t.Fatalf("focused resource pane did not follow its own cursor:\n%s", resourcePane)
+	}
+}
+
+func TestDetailFirstLayoutAndVisibilityToggle(t *testing.T) {
+	model := testModel(t)
+	model.width = 120
+	model.height = 40
+	model.activeWorkspace = strings.Repeat("long-workspace:", 12)
+
+	view := ansi.Strip(model.View())
+	lines := strings.Split(view, "\n")
+	if got, want := lipgloss.Width(view), model.width; got != want {
+		t.Fatalf("wide view width = %d, want %d", got, want)
+	}
+	if got, want := lipgloss.Height(view), model.height; got != want {
+		t.Fatalf("view height = %d, want %d", got, want)
+	}
+	if got, want := lipgloss.Width(lines[1]), model.width; got != want {
+		t.Fatalf("workspace pane width = %d, want %d", got, want)
+	}
+	if workspace, resources := strings.Index(view, "Workspaces"), strings.Index(view, "API resources"); workspace < 0 || resources < 0 || workspace > resources {
+		t.Fatalf("workspace pane should render above navigation: %s", view)
+	}
+	detailColumn := func(rendered string) int {
+		for _, line := range strings.Split(rendered, "\n") {
+			if column := strings.Index(line, "Resource detail"); column >= 0 {
+				return column
+			}
+		}
+		return -1
+	}
+	normalDetailColumn := detailColumn(view)
+	if normalDetailColumn < 0 {
+		t.Fatal("normal layout is missing the detail pane")
+	}
+
+	model.focus = instanceFocus
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	if !model.detailOnly || model.focus != detailFocus {
+		t.Fatalf("detail-only toggle state = (%v, %v), want (true, detailFocus)", model.detailOnly, model.focus)
+	}
+	detailView := ansi.Strip(model.View())
+	if !strings.Contains(detailView, "Workspaces") || !strings.Contains(detailView, "Resource detail") {
+		t.Fatalf("detail-only mode should retain workspace and detail panes: %s", detailView)
+	}
+	if strings.Contains(detailView, "API resources") || strings.Contains(detailView, "Instances") {
+		t.Fatalf("detail-only mode should hide lower navigation panes: %s", detailView)
+	}
+	if detailColumn(detailView) >= normalDetailColumn {
+		t.Fatalf("detail-only mode did not expand the detail pane: normal column %d, detail-only column %d", normalDetailColumn, detailColumn(detailView))
+	}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyTab})
+	if model.focus != workspaceFocus {
+		t.Fatalf("Tab in detail-only mode focused %v, want workspaceFocus", model.focus)
+	}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}})
+	if model.detailOnly {
+		t.Fatal("second toggle should restore the navigation panes")
+	}
+}
+
+func TestNarrowLayoutRenders(t *testing.T) {
+	model := testModel(t)
+	model.width = 60
+	model.height = 24
+	view := ansi.Strip(model.View())
+	if got, want := lipgloss.Height(view), model.height; got != want {
+		t.Fatalf("narrow view height = %d, want %d", got, want)
+	}
+	if got, want := lipgloss.Width(view), model.width; got != want {
+		t.Fatalf("narrow view width = %d, want %d", got, want)
+	}
+}
+
+func TestVerySmallTerminalMessageFits(t *testing.T) {
+	model := testModel(t)
+	model.width = 24
+	model.height = 10
+	view := ansi.Strip(model.View())
+	if got, want := lipgloss.Width(view), model.width; got > want {
+		t.Fatalf("small-terminal message width = %d, exceeds %d", got, want)
 	}
 }

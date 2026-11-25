@@ -72,6 +72,7 @@ type Model struct {
 	matchIndex int
 	detailTab  int
 	scroll     int
+	detailOnly bool
 
 	width   int
 	height  int
@@ -172,26 +173,76 @@ func (m *Model) View() string {
 	if m.width == 0 || m.height == 0 {
 		return "Starting lazykcp..."
 	}
-	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render("lazykcp") +
-		"  workspace: " + m.activeWorkspace
+	if m.width < 40 || m.height < 16 {
+		return clip("Terminal too small; resize to at least 40x16.", m.width)
+	}
+	title := "lazykcp"
+	header := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("205")).Render(title)
+	remainingHeaderWidth := m.width - lipgloss.Width(title)
+	appendHeader := func(text string, style lipgloss.Style) {
+		if remainingHeaderWidth <= 0 {
+			return
+		}
+		text = clip(text, remainingHeaderWidth)
+		header += style.Render(text)
+		remainingHeaderWidth -= lipgloss.Width(text)
+	}
+	appendHeader("  workspace: "+m.activeWorkspace, lipgloss.NewStyle())
 	if m.loading != "" {
-		header += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Render(m.loading+"…")
+		appendHeader("  "+m.loading+"…", lipgloss.NewStyle().Foreground(lipgloss.Color("220")))
 	}
 	if m.status != "" {
-		header += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Render(m.status)
+		appendHeader("  "+m.status, lipgloss.NewStyle().Foreground(lipgloss.Color("196")))
 	}
 
-	available := max(4, m.width-3)
-	widths := []int{available * 22 / 100, available * 23 / 100, available * 25 / 100}
-	widths = append(widths, available-widths[0]-widths[1]-widths[2])
-	paneHeight := max(3, m.height-4)
-	panes := []string{
-		m.renderPane("Workspaces", m.workspaceLines(), widths[0], paneHeight, m.focus == workspaceFocus),
-		m.renderPane("API resources", m.resourceLines(), widths[1], paneHeight, m.focus == resourceFocus),
-		m.renderPane("Instances", m.instanceLines(), widths[2], paneHeight, m.focus == instanceFocus),
-		m.renderPane(m.detailTitle(), m.detailLines(), widths[3], paneHeight, m.focus == detailFocus),
+	paneWidth := m.width
+	paneAreaHeight := m.height - 2
+	workspaceHeight := clamp(paneAreaHeight/5, 5, 7)
+	if workspaceHeight > paneAreaHeight-7 {
+		workspaceHeight = paneAreaHeight - 7
 	}
-	help := "↑/k ↓/j move  ←/h →/l focus/expand  enter select  / filter/search  tab focus  q quit"
+	lowerHeight := paneAreaHeight - workspaceHeight
+	workspacePane := m.renderPane("Workspaces", m.workspaceLines(), paneWidth, workspaceHeight, m.focus == workspaceFocus)
+	var lowerPane string
+	if m.detailOnly {
+		lowerPane = m.renderPane(m.detailTitle(), m.detailLines(), paneWidth, lowerHeight, m.focus == detailFocus)
+	} else if paneWidth >= 80 {
+		navigationWidth := clamp(paneWidth*28/100, 20, 36)
+		resourceHeight := lowerHeight / 2
+		instanceHeight := lowerHeight - resourceHeight
+		navigationPane := lipgloss.JoinVertical(
+			lipgloss.Left,
+			m.renderPane("API resources", m.resourceLines(), navigationWidth, resourceHeight, m.focus == resourceFocus),
+			m.renderPane("Instances", m.instanceLines(), navigationWidth, instanceHeight, m.focus == instanceFocus),
+		)
+		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), paneWidth-navigationWidth, lowerHeight, m.focus == detailFocus)
+		lowerPane = lipgloss.JoinHorizontal(lipgloss.Top, navigationPane, detailPane)
+	} else {
+		navigationHeight := min(max(4, lowerHeight/3), lowerHeight-3)
+		resourceWidth := paneWidth / 2
+		navigationPane := lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			m.renderPane("API resources", m.resourceLines(), resourceWidth, navigationHeight, m.focus == resourceFocus),
+			m.renderPane("Instances", m.instanceLines(), paneWidth-resourceWidth, navigationHeight, m.focus == instanceFocus),
+		)
+		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), paneWidth, lowerHeight-navigationHeight, m.focus == detailFocus)
+		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane)
+	}
+	help := "j/k:move tab:focus enter:select /:filter v:nav q:quit"
+	if m.width >= 90 {
+		help = "↑/k ↓/j move  ←/h →/l focus/expand  enter select  / filter/search  tab focus  "
+		if m.detailOnly {
+			help += "v show navigation  "
+		} else {
+			help += "v hide navigation  "
+		}
+		help += "q quit"
+	}
+	if m.width < 90 {
+		if m.detailOnly {
+			help += " (v show nav)"
+		}
+	}
 	if m.filtering {
 		help = "Filter: /" + m.filterText + "  enter close  esc clear"
 	} else if m.searching {
@@ -199,8 +250,11 @@ func (m *Model) View() string {
 	} else if m.focus == detailFocus {
 		help += "  n/N next/previous  [/] or 1/2 JSON/YAML"
 	}
+	if lipgloss.Width(help) > m.width {
+		help = clip(help, m.width)
+	}
 	return header + "\n" +
-		lipgloss.JoinHorizontal(lipgloss.Top, panes...) + "\n" +
+		lipgloss.JoinVertical(lipgloss.Left, workspacePane, lowerPane) + "\n" +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(help)
 }
 
@@ -215,10 +269,10 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 	case tea.KeyCtrlC:
 		return tea.Quit
 	case tea.KeyTab:
-		m.focus = (m.focus + 1) % 4
+		m.changeFocus(1)
 		return nil
 	case tea.KeyShiftTab:
-		m.focus = (m.focus + 3) % 4
+		m.changeFocus(-1)
 		return nil
 	case tea.KeyUp:
 		return m.move(-1)
@@ -228,16 +282,14 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 		if m.focus == workspaceFocus {
 			m.collapseWorkspace()
 		} else {
-			m.focus--
+			m.changeFocus(-1)
 		}
 		return nil
 	case tea.KeyRight:
 		if m.focus == workspaceFocus {
 			return m.expandWorkspace()
 		}
-		if m.focus < detailFocus {
-			m.focus++
-		}
+		m.changeFocus(1)
 		return nil
 	case tea.KeyEnter:
 		return m.selectCurrent()
@@ -264,13 +316,13 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 		if m.focus == workspaceFocus {
 			m.collapseWorkspace()
 		} else if m.focus > workspaceFocus {
-			m.focus--
+			m.changeFocus(-1)
 		}
 	case "l":
 		if m.focus == workspaceFocus {
 			return m.expandWorkspace()
-		} else if m.focus < detailFocus {
-			m.focus++
+		} else {
+			m.changeFocus(1)
 		}
 	case "/":
 		if m.focus == detailFocus {
@@ -293,6 +345,8 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 		m.setDetailTab(0)
 	case "2":
 		m.setDetailTab(1)
+	case "v":
+		m.toggleDetailOnly()
 	}
 	return nil
 }
@@ -363,6 +417,28 @@ func (m *Model) move(delta int) tea.Cmd {
 		m.scroll = max(0, m.scroll+delta)
 	}
 	return nil
+}
+
+func (m *Model) changeFocus(delta int) {
+	order := []focus{workspaceFocus, resourceFocus, instanceFocus, detailFocus}
+	if m.detailOnly {
+		order = []focus{workspaceFocus, detailFocus}
+	}
+	index := 0
+	for i, panel := range order {
+		if panel == m.focus {
+			index = i
+			break
+		}
+	}
+	m.focus = order[(index+delta+len(order))%len(order)]
+}
+
+func (m *Model) toggleDetailOnly() {
+	m.detailOnly = !m.detailOnly
+	if m.detailOnly && (m.focus == resourceFocus || m.focus == instanceFocus) {
+		m.focus = detailFocus
+	}
 }
 
 func (m *Model) selectCurrent() tea.Cmd {
@@ -539,7 +615,7 @@ func (m *Model) detailLines() []string {
 
 func (m *Model) renderPane(title string, lines []string, width, height int, focused bool) string {
 	innerWidth := max(1, width-2)
-	innerHeight := max(1, height-2)
+	innerHeight := max(1, height-3)
 	titleStyle := lipgloss.NewStyle().Bold(true)
 	if focused {
 		titleStyle = titleStyle.Bold(true).Foreground(lipgloss.Color("205"))
@@ -553,10 +629,12 @@ func (m *Model) renderPane(title string, lines []string, width, height int, focu
 	}
 	selected := m.selectedLineIndex()
 	start := 0
-	if focused && m.focus == detailFocus {
-		start = clamp(m.scroll, 0, max(0, len(lines)-innerHeight))
-	} else if selected >= innerHeight {
-		start = selected - innerHeight + 1
+	if focused {
+		if m.focus == detailFocus {
+			start = clamp(m.scroll, 0, max(0, len(lines)-innerHeight))
+		} else if selected >= innerHeight {
+			start = selected - innerHeight + 1
+		}
 	}
 	for row := 0; row < innerHeight; row++ {
 		index := start + row
