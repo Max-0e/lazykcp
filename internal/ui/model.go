@@ -43,9 +43,31 @@ type paneBounds struct {
 	height int
 }
 
+type paneSizes struct {
+	workspaceHeight  int
+	navigationWidth  int
+	resourceHeight   int
+	navigationHeight int
+	resourceWidth    int
+}
+
+type divider int
+
+const (
+	noDivider divider = iota
+	workspaceDivider
+	navigationDivider
+	resourceInstanceDivider
+	narrowNavigationDivider
+	narrowResourceInstanceDivider
+)
+
 const (
 	detailTabWidth      = 6
 	detailTabGroupWidth = 13
+	minPaneExtent       = 3
+	minNavigationWidth  = 20
+	minNarrowPaneWidth  = 12
 )
 
 type workspaceNode struct {
@@ -86,19 +108,22 @@ type Model struct {
 	selectedResource *kcp.Resource
 	selectedInstance *unstructured.Unstructured
 
-	resources  []kcp.Resource
-	instances  []unstructured.Unstructured
-	focus      focus
-	filters    [3]string
-	filtering  bool
-	filterText string
-	searching  bool
-	searchText string
-	matches    []int
-	matchIndex int
-	detailTab  int
-	scroll     int
-	detailOnly bool
+	resources   []kcp.Resource
+	instances   []unstructured.Unstructured
+	focus       focus
+	filters     [3]string
+	filtering   bool
+	filterText  string
+	searching   bool
+	searchText  string
+	matches     []int
+	matchIndex  int
+	detailTab   int
+	scroll      int
+	detailOnly  bool
+	paneSizes   paneSizes
+	dragDivider divider
+	dragOffset  int
 
 	width   int
 	height  int
@@ -131,6 +156,7 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.dragDivider = noDivider
 		return m, nil
 	case workspaceResult:
 		node := m.findWorkspace(msg.parent)
@@ -245,9 +271,9 @@ func (m *Model) View() string {
 		detailPane := m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane)
 	}
-	help := "j/k move ^D/^U page enter select / filter tab focus v nav mouse"
+	help := "j/k move ^D/^U page enter select / filter tab focus v nav mouse drag"
 	if m.width >= 90 {
-		help = "↑↓/jk move  Ctrl+D/U page  h/l focus/expand  enter select  / filter  tab focus  v nav  mouse"
+		help = "↑↓/jk move  Ctrl+D/U page  h/l focus  enter select  / filter  tab focus  v nav  mouse drag borders"
 	}
 	if m.width < 90 {
 		if m.detailOnly {
@@ -271,10 +297,11 @@ func (m *Model) View() string {
 
 func (m *Model) layoutForView() viewLayout {
 	paneAreaHeight := m.height - 2
-	workspaceHeight := clamp(paneAreaHeight/5, 5, 7)
-	if workspaceHeight > paneAreaHeight-7 {
-		workspaceHeight = paneAreaHeight - 7
+	workspaceHeight := m.paneSizes.workspaceHeight
+	if workspaceHeight == 0 {
+		workspaceHeight = clamp(paneAreaHeight/5, 5, 7)
 	}
+	workspaceHeight = clamp(workspaceHeight, 5, paneAreaHeight-7)
 	lowerHeight := paneAreaHeight - workspaceHeight
 	layout := viewLayout{
 		workspaceHeight: workspaceHeight,
@@ -285,15 +312,31 @@ func (m *Model) layoutForView() viewLayout {
 		return layout
 	}
 	if m.width >= 80 {
-		layout.navigationWidth = clamp(m.width*28/100, 20, 36)
-		layout.resourceHeight = lowerHeight / 2
+		layout.navigationWidth = m.paneSizes.navigationWidth
+		if layout.navigationWidth == 0 {
+			layout.navigationWidth = clamp(m.width*28/100, minNavigationWidth, 36)
+		}
+		layout.navigationWidth = clamp(layout.navigationWidth, minNavigationWidth, m.width-minNavigationWidth)
+		layout.resourceHeight = m.paneSizes.resourceHeight
+		if layout.resourceHeight == 0 {
+			layout.resourceHeight = lowerHeight / 2
+		}
+		layout.resourceHeight = clamp(layout.resourceHeight, minPaneExtent, lowerHeight-minPaneExtent)
 		layout.instanceHeight = lowerHeight - layout.resourceHeight
 		layout.detailWidth = m.width - layout.navigationWidth
 		return layout
 	}
 	layout.narrow = true
-	layout.navigationHeight = min(max(4, lowerHeight/3), lowerHeight-3)
-	layout.resourceWidth = m.width / 2
+	layout.navigationHeight = m.paneSizes.navigationHeight
+	if layout.navigationHeight == 0 {
+		layout.navigationHeight = min(max(4, lowerHeight/3), lowerHeight-minPaneExtent)
+	}
+	layout.navigationHeight = clamp(layout.navigationHeight, minPaneExtent, lowerHeight-minPaneExtent)
+	layout.resourceWidth = m.paneSizes.resourceWidth
+	if layout.resourceWidth == 0 {
+		layout.resourceWidth = m.width / 2
+	}
+	layout.resourceWidth = clamp(layout.resourceWidth, minNarrowPaneWidth, m.width-minNarrowPaneWidth)
 	layout.instanceWidth = m.width - layout.resourceWidth
 	layout.detailHeight = lowerHeight - layout.navigationHeight
 	return layout
@@ -375,9 +418,102 @@ func containsPoint(bounds paneBounds, x, y int) bool {
 		y >= bounds.y && y < bounds.y+bounds.height
 }
 
+func (m *Model) dividerAt(x, y int) (divider, bool) {
+	if m.width < 40 || m.height < 16 {
+		return noDivider, false
+	}
+	layout := m.layoutForView()
+	lowerY := 1 + layout.workspaceHeight
+	if y == lowerY-1 {
+		return workspaceDivider, true
+	}
+	if m.detailOnly {
+		return noDivider, false
+	}
+	if !layout.narrow {
+		if x == layout.navigationWidth-1 && y >= lowerY && y < lowerY+layout.detailHeight {
+			return navigationDivider, true
+		}
+		if y == lowerY+layout.resourceHeight-1 && x >= 0 && x < layout.navigationWidth-1 {
+			return resourceInstanceDivider, true
+		}
+		return noDivider, false
+	}
+	if y == lowerY+layout.navigationHeight-1 {
+		return narrowNavigationDivider, true
+	}
+	if x == layout.resourceWidth-1 && y >= lowerY && y < lowerY+layout.navigationHeight-1 {
+		return narrowResourceInstanceDivider, true
+	}
+	return noDivider, false
+}
+
+func (m *Model) beginResize(target divider, x, y int) {
+	layout := m.layoutForView()
+	lowerY := 1 + layout.workspaceHeight
+	boundary := 0
+	switch target {
+	case workspaceDivider:
+		boundary = lowerY
+	case navigationDivider:
+		boundary = layout.navigationWidth
+	case resourceInstanceDivider:
+		boundary = lowerY + layout.resourceHeight
+	case narrowNavigationDivider:
+		boundary = lowerY + layout.navigationHeight
+	case narrowResourceInstanceDivider:
+		boundary = layout.resourceWidth
+	}
+	if target == navigationDivider || target == narrowResourceInstanceDivider {
+		m.dragOffset = x - boundary
+	} else {
+		m.dragOffset = y - boundary
+	}
+	m.dragDivider = target
+}
+
+func (m *Model) resizeFrom(x, y int) {
+	layout := m.layoutForView()
+	lowerY := 1 + layout.workspaceHeight
+	switch m.dragDivider {
+	case workspaceDivider:
+		paneAreaHeight := m.height - 2
+		m.paneSizes.workspaceHeight = clamp(y-m.dragOffset-1, 5, paneAreaHeight-7)
+	case navigationDivider:
+		m.paneSizes.navigationWidth = clamp(x-m.dragOffset, minNavigationWidth, m.width-minNavigationWidth)
+	case resourceInstanceDivider:
+		m.paneSizes.resourceHeight = clamp(y-m.dragOffset-lowerY, minPaneExtent, layout.detailHeight-minPaneExtent)
+	case narrowNavigationDivider:
+		lowerHeight := layout.navigationHeight + layout.detailHeight
+		m.paneSizes.navigationHeight = clamp(y-m.dragOffset-lowerY, minPaneExtent, lowerHeight-minPaneExtent)
+	case narrowResourceInstanceDivider:
+		m.paneSizes.resourceWidth = clamp(x-m.dragOffset, minNarrowPaneWidth, m.width-minNarrowPaneWidth)
+	}
+}
+
 func (m *Model) handleMouse(mouse tea.MouseMsg) tea.Cmd {
+	if m.dragDivider != noDivider {
+		switch mouse.Action {
+		case tea.MouseActionRelease:
+			m.dragDivider = noDivider
+			return nil
+		case tea.MouseActionMotion:
+			if !m.filtering && !m.searching {
+				m.resizeFrom(mouse.X, mouse.Y)
+			}
+			return nil
+		default:
+			return nil
+		}
+	}
 	if m.filtering || m.searching {
 		return nil
+	}
+	if mouse.Action == tea.MouseActionPress && mouse.Button == tea.MouseButtonLeft {
+		if target, ok := m.dividerAt(mouse.X, mouse.Y); ok {
+			m.beginResize(target, mouse.X, mouse.Y)
+			return nil
+		}
 	}
 	bounds, ok := m.paneBoundsAt(mouse.X, mouse.Y)
 	if !ok {
