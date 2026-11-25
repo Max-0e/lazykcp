@@ -29,5 +29,6 @@ This option is off by default. It keeps traffic encrypted but disables verificat
 - Press `/` in a sidebar to filter its entries; press `/` in the detail pane to search the current representation. Use `n`/`N` to move between matches.
 - Use `1`/`[` for JSON and `2`/`]` for YAML. Press `q` to exit.
 - Press `v` to hide or restore the resource/instance navigation panes while keeping the workspace tree visible.
+- Use the mouse wheel over a pane to focus and scroll it. Click a workspace, resource, or instance row to activate it; click a workspace `+`/`-` marker to expand or collapse that branch.
 
 The configured identity needs permission to list workspaces and the resources you want to inspect. Resource discovery and instance listing use the permissions available in the selected workspace. The initial version does not create, update, or delete resources.

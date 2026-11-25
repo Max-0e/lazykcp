@@ -21,7 +21,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	program := tea.NewProgram(ui.NewModel(client), tea.WithAltScreen())
+	program := tea.NewProgram(ui.NewModel(client), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

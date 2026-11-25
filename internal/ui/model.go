@@ -35,6 +35,14 @@ type viewLayout struct {
 	detailHeight     int
 }
 
+type paneBounds struct {
+	panel  focus
+	x      int
+	y      int
+	width  int
+	height int
+}
+
 type workspaceNode struct {
 	name     string
 	path     string
@@ -178,6 +186,8 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
+	case tea.MouseMsg:
+		return m, m.handleMouse(msg)
 	}
 	return m, nil
 }
@@ -230,15 +240,9 @@ func (m *Model) View() string {
 		detailPane := m.renderPane(m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane)
 	}
-	help := "j/k move ^D/^U half-page tab focus enter select / filter v nav q quit"
+	help := "j/k move ^D/^U page enter select / filter tab focus v nav mouse"
 	if m.width >= 90 {
-		help = "↑/k ↓/j move  Ctrl+D/U half-page  ←/h →/l focus/expand  enter select  / filter  tab focus  "
-		if m.detailOnly {
-			help += "v show navigation  "
-		} else {
-			help += "v hide navigation  "
-		}
-		help += "q quit"
+		help = "↑↓/jk move  Ctrl+D/U page  h/l focus/expand  enter select  / filter  tab focus  v nav  mouse"
 	}
 	if m.width < 90 {
 		if m.detailOnly {
@@ -312,6 +316,160 @@ func (m *Model) paneVisibleRows(panel focus) int {
 		height = layout.detailHeight
 	}
 	return max(1, height-3)
+}
+
+func (m *Model) paneBoundsAt(x, y int) (paneBounds, bool) {
+	if m.width < 40 || m.height < 16 {
+		return paneBounds{}, false
+	}
+	layout := m.layoutForView()
+	workspace := paneBounds{panel: workspaceFocus, x: 0, y: 1, width: m.width, height: layout.workspaceHeight}
+	if containsPoint(workspace, x, y) {
+		return workspace, true
+	}
+
+	lowerY := workspace.y + workspace.height
+	if m.detailOnly {
+		detail := paneBounds{panel: detailFocus, x: 0, y: lowerY, width: m.width, height: layout.detailHeight}
+		if containsPoint(detail, x, y) {
+			return detail, true
+		}
+		return paneBounds{}, false
+	}
+	if !layout.narrow {
+		if containsPoint(paneBounds{panel: resourceFocus, x: 0, y: lowerY, width: layout.navigationWidth, height: layout.resourceHeight}, x, y) {
+			return paneBounds{panel: resourceFocus, x: 0, y: lowerY, width: layout.navigationWidth, height: layout.resourceHeight}, true
+		}
+		instanceY := lowerY + layout.resourceHeight
+		if containsPoint(paneBounds{panel: instanceFocus, x: 0, y: instanceY, width: layout.navigationWidth, height: layout.instanceHeight}, x, y) {
+			return paneBounds{panel: instanceFocus, x: 0, y: instanceY, width: layout.navigationWidth, height: layout.instanceHeight}, true
+		}
+		detail := paneBounds{panel: detailFocus, x: layout.navigationWidth, y: lowerY, width: layout.detailWidth, height: layout.detailHeight}
+		if containsPoint(detail, x, y) {
+			return detail, true
+		}
+		return paneBounds{}, false
+	}
+
+	if containsPoint(paneBounds{panel: resourceFocus, x: 0, y: lowerY, width: layout.resourceWidth, height: layout.navigationHeight}, x, y) {
+		return paneBounds{panel: resourceFocus, x: 0, y: lowerY, width: layout.resourceWidth, height: layout.navigationHeight}, true
+	}
+	if containsPoint(paneBounds{panel: instanceFocus, x: layout.resourceWidth, y: lowerY, width: layout.instanceWidth, height: layout.navigationHeight}, x, y) {
+		return paneBounds{panel: instanceFocus, x: layout.resourceWidth, y: lowerY, width: layout.instanceWidth, height: layout.navigationHeight}, true
+	}
+	detailY := lowerY + layout.navigationHeight
+	detail := paneBounds{panel: detailFocus, x: 0, y: detailY, width: layout.detailWidth, height: layout.detailHeight}
+	if containsPoint(detail, x, y) {
+		return detail, true
+	}
+	return paneBounds{}, false
+}
+
+func containsPoint(bounds paneBounds, x, y int) bool {
+	return x >= bounds.x && x < bounds.x+bounds.width &&
+		y >= bounds.y && y < bounds.y+bounds.height
+}
+
+func (m *Model) handleMouse(mouse tea.MouseMsg) tea.Cmd {
+	if m.filtering || m.searching {
+		return nil
+	}
+	bounds, ok := m.paneBoundsAt(mouse.X, mouse.Y)
+	if !ok {
+		return nil
+	}
+	if mouse.Button == tea.MouseButtonWheelUp || mouse.Button == tea.MouseButtonWheelDown {
+		m.focus = bounds.panel
+		direction := 0
+		switch mouse.Button {
+		case tea.MouseButtonWheelUp:
+			direction = -1
+		case tea.MouseButtonWheelDown:
+			direction = 1
+		default:
+			return nil
+		}
+		if bounds.panel == detailFocus {
+			maxScroll := max(0, len(m.detailLines())-m.paneVisibleRows(detailFocus))
+			m.scroll = clamp(m.scroll+direction*3, 0, maxScroll)
+			return nil
+		}
+		return m.move(direction * 3)
+	}
+	if mouse.Action != tea.MouseActionPress || mouse.Button != tea.MouseButtonLeft {
+		return nil
+	}
+	var lines []string
+	var visibleRows, start int
+	if bounds.panel != detailFocus {
+		lines = m.linesForPanel(bounds.panel)
+		visibleRows = m.paneVisibleRows(bounds.panel)
+		start = m.paneRenderStart(bounds.panel, len(lines), visibleRows)
+	}
+	m.focus = bounds.panel
+	if bounds.panel == detailFocus {
+		return nil
+	}
+
+	row := mouse.Y - bounds.y - 2
+	index := start + row
+	if row < 0 || row >= visibleRows || index < 0 || index >= len(lines) {
+		return nil
+	}
+
+	switch bounds.panel {
+	case workspaceFocus:
+		items := m.filteredWorkspaces()
+		node := items[index]
+		depth := strings.Count(node.path, ":") - strings.Count(m.root.path, ":")
+		markerColumn := 1 + max(0, depth)*2
+		if mouse.X-bounds.x == markerColumn && m.workspaceMarker(node) != " " {
+			m.workspaceCursor = node.path
+			if node.expanded {
+				node.expanded = false
+				return nil
+			}
+			return m.expandWorkspace()
+		}
+		m.workspaceCursor = node.path
+		return m.selectCurrent()
+	case resourceFocus:
+		m.resourceCursor = index
+		return m.selectCurrent()
+	case instanceFocus:
+		m.instanceCursor = index
+		return m.selectCurrent()
+	}
+	return nil
+}
+
+func (m *Model) linesForPanel(panel focus) []string {
+	switch panel {
+	case workspaceFocus:
+		return m.workspaceLines()
+	case resourceFocus:
+		return m.resourceLines()
+	case instanceFocus:
+		return m.instanceLines()
+	case detailFocus:
+		return m.detailLines()
+	default:
+		return nil
+	}
+}
+
+func (m *Model) paneRenderStart(panel focus, lineCount, visibleRows int) int {
+	if m.focus != panel {
+		return 0
+	}
+	if panel == detailFocus {
+		return clamp(m.scroll, 0, max(0, lineCount-visibleRows))
+	}
+	selected := m.selectedLineIndex()
+	if selected >= visibleRows {
+		return selected - visibleRows + 1
+	}
+	return 0
 }
 
 func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
@@ -610,12 +768,7 @@ func (m *Model) workspaceLines() []string {
 	lines := make([]string, len(items))
 	for i, node := range items {
 		depth := strings.Count(node.path, ":") - strings.Count(m.root.path, ":")
-		marker := " "
-		if !node.loaded {
-			marker = "+"
-		} else if node.expanded {
-			marker = "-"
-		}
+		marker := m.workspaceMarker(node)
 		prefix := strings.Repeat("  ", max(0, depth)) + marker + " "
 		lines[i] = prefix + node.name
 		if node.path == m.activeWorkspace {
@@ -623,6 +776,16 @@ func (m *Model) workspaceLines() []string {
 		}
 	}
 	return lines
+}
+
+func (m *Model) workspaceMarker(node *workspaceNode) string {
+	if node.expanded {
+		return "-"
+	}
+	if !node.loaded || len(node.children) > 0 {
+		return "+"
+	}
+	return " "
 }
 
 func (m *Model) resourceLines() []string {
@@ -700,11 +863,7 @@ func (m *Model) renderPane(title string, lines []string, width, height int, focu
 	selected := m.selectedLineIndex()
 	start := 0
 	if focused {
-		if m.focus == detailFocus {
-			start = clamp(m.scroll, 0, max(0, len(lines)-innerHeight))
-		} else if selected >= innerHeight {
-			start = selected - innerHeight + 1
-		}
+		start = m.paneRenderStart(m.focus, len(lines), innerHeight)
 	}
 	for row := 0; row < innerHeight; row++ {
 		index := start + row
