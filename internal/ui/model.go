@@ -124,7 +124,7 @@ func NewModel(client *kcp.Client) *Model {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return m.loadWorkspaces(m.root.path)
+	return m.selectCurrent()
 }
 
 func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -862,8 +862,23 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 	if showTabs {
 		title = m.selectedInstance.GetName()
 	}
+	query := m.queryForPanel(panel)
 	if len(lines) == 0 {
-		lines = []string{" "}
+		switch panel {
+		case resourceFocus:
+			lines = []string{"No API resources"}
+		case instanceFocus:
+			switch {
+			case m.selectedResource == nil:
+				lines = []string{"Select a resource"}
+			case m.loading == "Loading instances":
+				lines = []string{"Loading instances"}
+			default:
+				lines = []string{"No instances"}
+			}
+		default:
+			lines = []string{" "}
+		}
 	}
 	selected := m.selectedLineIndex(panel)
 	start := m.paneRenderStart(panel, len(lines), innerHeight)
@@ -884,7 +899,7 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 		titleWidth = max(0, innerWidth-detailTabGroupWidth)
 		tabsWidth = detailTabGroupWidth
 	}
-	label := clip(" "+title+" ", titleWidth)
+	label := renderPaneTitle(title, query, titleWidth)
 	topFill := max(0, innerWidth-lipgloss.Width(label)-tabsWidth)
 	top := borderStyle.Render(border.TopLeft) +
 		titleStyle.Render(label) +
@@ -924,6 +939,33 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 	}
 	bottom := borderStyle.Render(border.BottomLeft + strings.Repeat(border.Bottom, innerWidth) + border.BottomRight)
 	return top + "\n" + strings.Join(rows, "\n") + "\n" + bottom
+}
+
+func (m *Model) queryForPanel(panel focus) string {
+	switch panel {
+	case workspaceFocus, resourceFocus, instanceFocus:
+		return m.filters[panel]
+	case detailFocus:
+		return m.searchText
+	default:
+		return ""
+	}
+}
+
+func renderPaneTitle(title, query string, width int) string {
+	if query == "" {
+		return clip(" "+title+" ", width)
+	}
+	queryLabel := "(/" + query + ")"
+	queryWidth := lipgloss.Width(queryLabel)
+	if queryWidth+3 > width {
+		return clip(queryLabel, width)
+	}
+	titleWidth := width - queryWidth - 3
+	if titleWidth == 0 {
+		return queryLabel
+	}
+	return " " + clip(title, titleWidth) + " " + queryLabel + " "
 }
 
 func (m *Model) renderDetailTabs(borderStyle lipgloss.Style) string {

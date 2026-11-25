@@ -2,6 +2,8 @@ package ui
 
 import (
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -40,6 +42,77 @@ current-context: admin@kcp
 		t.Fatalf("create client: %v", err)
 	}
 	return NewModel(client)
+}
+
+func TestInitDiscoversResourcesForRootWorkspace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/clusters/root/apis":
+			_, _ = fmt.Fprint(w, `{"apiVersion":"v1","kind":"APIGroupList","groups":[]}`)
+		case "/clusters/root/api":
+			_, _ = fmt.Fprint(w, `{"apiVersion":"v1","kind":"APIVersions","versions":["v1"]}`)
+		case "/clusters/root/api/v1":
+			_, _ = fmt.Fprint(w, `{"apiVersion":"v1","kind":"APIResourceList","groupVersion":"v1","resources":[{"name":"pods","singularName":"pod","namespaced":true,"kind":"Pod","verbs":["get","list"]}]}`)
+		case "/clusters/root/apis/tenancy.kcp.io/v1alpha1/workspaces":
+			_, _ = fmt.Fprint(w, `{"apiVersion":"tenancy.kcp.io/v1alpha1","kind":"WorkspaceList","metadata":{"resourceVersion":"1"},"items":[]}`)
+		default:
+			t.Errorf("unexpected API request path %q", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	path := t.TempDir() + "/config"
+	config := fmt.Sprintf(`apiVersion: v1
+kind: Config
+clusters:
+- name: kcp
+  cluster:
+    server: %s/clusters/root
+users:
+- name: admin
+  user: {}
+contexts:
+- name: admin@kcp
+  context:
+    cluster: kcp
+    user: admin
+current-context: admin@kcp
+`, server.URL)
+	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := kcp.NewClient(path, false)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	model := NewModel(client)
+
+	message := model.Init()()
+	batch, ok := message.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("Init() command message = %T, want a batch with workspace and resource discovery", message)
+	}
+	if len(batch) != 2 {
+		t.Fatalf("Init() batch has %d commands, want workspace loading and root resource discovery", len(batch))
+	}
+	for _, command := range batch {
+		result := command()
+		if _, followup := model.Update(result); followup != nil {
+			t.Fatalf("startup result unexpectedly returned a follow-up command: %v", followup)
+		}
+	}
+
+	if model.activeWorkspace != "root" {
+		t.Fatalf("initial active workspace = %q, want root", model.activeWorkspace)
+	}
+	if len(model.resources) != 1 || model.resources[0].Name != "pods" {
+		t.Fatalf("root resources after initialization = %#v, want pods", model.resources)
+	}
+	if !model.root.loaded {
+		t.Fatal("root workspace was not loaded during initialization")
+	}
 }
 
 func sendMouse(model *Model, message tea.MouseMsg) tea.Cmd {
@@ -187,6 +260,154 @@ func TestPaneLabelAndUnfocusedSelectionStayVisible(t *testing.T) {
 	otherSelection := model.renderPane(resourceFocus, "API resources", model.resourceLines(), 32, 6, false)
 	if rendered == otherSelection {
 		t.Fatal("changing the unfocused resource cursor should change its visible selection style")
+	}
+}
+
+func TestEmptyNavigationPanesShowPlaceholders(t *testing.T) {
+	model := testModel(t)
+	tests := []struct {
+		panel       focus
+		title       string
+		placeholder string
+	}{
+		{panel: resourceFocus, title: "API resources", placeholder: "No API resources"},
+		{panel: instanceFocus, title: "Instances", placeholder: "Select a resource"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			rendered := ansi.Strip(model.renderPane(tt.panel, tt.title, model.linesForPanel(tt.panel), 32, 6, true))
+			if !strings.Contains(rendered, tt.placeholder) {
+				t.Fatalf("empty %s pane is missing placeholder %q:\n%s", tt.title, tt.placeholder, rendered)
+			}
+			if model.selectedLineIndex(tt.panel) != -1 {
+				t.Fatalf("empty %s pane should not have a selectable placeholder row", tt.title)
+			}
+		})
+	}
+
+	model.selectedResource = &kcp.Resource{Name: "pods"}
+	model.loading = ""
+	rendered := ansi.Strip(model.renderPane(instanceFocus, "Instances", model.instanceLines(), 32, 6, false))
+	if !strings.Contains(rendered, "No instances") {
+		t.Fatalf("empty instances for a selected API resource should be explicit:\n%s", rendered)
+	}
+	model.loading = "Loading instances"
+	rendered = ansi.Strip(model.renderPane(instanceFocus, "Instances", model.instanceLines(), 32, 6, false))
+	if !strings.Contains(rendered, "Loading instances") {
+		t.Fatalf("selected resource should show loading state while instances are fetched:\n%s", rendered)
+	}
+}
+
+func TestClickingEmptyPanePlaceholderDoesNotSelectItem(t *testing.T) {
+	model := testModel(t)
+	model.width = 120
+	model.height = 40
+	layout := model.layoutForView()
+	lowerY := 1 + layout.workspaceHeight
+
+	resourceCommand := sendMouse(model, tea.MouseMsg{
+		X:      1,
+		Y:      lowerY + 1,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	if resourceCommand != nil || model.selectedResource != nil {
+		t.Fatalf("resource placeholder click selected an item or returned a command: resource %#v, command %v", model.selectedResource, resourceCommand)
+	}
+
+	instanceY := lowerY + layout.resourceHeight + 1
+	instanceCommand := sendMouse(model, tea.MouseMsg{
+		X:      1,
+		Y:      instanceY,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	if instanceCommand != nil || model.selectedInstance != nil {
+		t.Fatalf("instance placeholder click selected an item or returned a command: instance %#v, command %v", model.selectedInstance, instanceCommand)
+	}
+}
+
+func TestPaneTitlesShowActiveFiltersAndDetailSearch(t *testing.T) {
+	model := testModel(t)
+	model.width = 120
+	model.height = 40
+	model.filters[workspaceFocus] = "root"
+	model.filters[resourceFocus] = "pods"
+	model.filters[instanceFocus] = "demo"
+	model.searchText = "ready"
+	model.selectedInstance = &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"name": "settings"},
+	}}
+
+	view := ansi.Strip(model.View())
+	for _, title := range []string{
+		"Workspaces (/root)",
+		"API resources (/pods)",
+		"Instances (/demo)",
+		"settings (/ready)",
+	} {
+		if !strings.Contains(view, title) {
+			t.Errorf("view is missing active query title %q:\n%s", title, view)
+		}
+	}
+}
+
+func TestLongActiveQueryRemainsVisibleInNarrowPaneTitle(t *testing.T) {
+	model := testModel(t)
+	model.filters[resourceFocus] = "this-is-a-long-active-filter"
+
+	rendered := ansi.Strip(model.renderPane(resourceFocus, "API resources", nil, 20, 6, false))
+	header := strings.Split(rendered, "\n")[0]
+	if got, want := lipgloss.Width(header), 20; got != want {
+		t.Fatalf("narrow pane title width = %d, want %d", got, want)
+	}
+	if !strings.Contains(header, "(/this-is-") {
+		t.Fatalf("active filter should remain visible when the title is constrained: %q", header)
+	}
+}
+
+func TestActiveQueryTitlesUpdateAndClear(t *testing.T) {
+	model := testModel(t)
+	model.width = 120
+	model.height = 40
+	model.resources = []kcp.Resource{{Name: "pods", Kind: "Pod"}}
+	model.focus = resourceFocus
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, char := range "pods" {
+		model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+	}
+	if view := ansi.Strip(model.View()); !strings.Contains(view, "API resources (/pods)") {
+		t.Fatalf("sidebar title did not update while typing:\n%s", view)
+	}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if view := ansi.Strip(model.View()); !strings.Contains(view, "API resources (/pods)") {
+		t.Fatalf("active filter title disappeared after closing input:\n%s", view)
+	}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if view := ansi.Strip(model.View()); strings.Contains(view, "API resources (/pods)") {
+		t.Fatalf("cleared filter remained in the pane title:\n%s", view)
+	}
+
+	model.selectedInstance = &unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"name": "settings"},
+		"data":     map[string]interface{}{"state": "ready"},
+	}}
+	model.focus = detailFocus
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, char := range "ready" {
+		model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+	}
+	if view := ansi.Strip(model.View()); !strings.Contains(view, "settings (/ready)") {
+		t.Fatalf("detail title did not update while typing:\n%s", view)
+	}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if view := ansi.Strip(model.View()); !strings.Contains(view, "settings (/ready)") {
+		t.Fatalf("active detail search title disappeared after closing input:\n%s", view)
+	}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	model.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if view := ansi.Strip(model.View()); strings.Contains(view, "settings (/ready)") {
+		t.Fatalf("cleared detail search remained in the pane title:\n%s", view)
 	}
 }
 
