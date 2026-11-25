@@ -489,8 +489,25 @@ func TestMouseClicksActivateListItems(t *testing.T) {
 		Action: tea.MouseActionPress,
 		Button: tea.MouseButtonLeft,
 	})
-	if model.focus != detailFocus || model.selectedInstance == nil || model.selectedInstance.GetName() != "second" {
+	if model.focus != instanceFocus || model.selectedInstance == nil || model.selectedInstance.GetName() != "second" {
 		t.Fatalf("instance click state = focus %v, instance %#v", model.focus, model.selectedInstance)
+	}
+	if !strings.Contains(strings.Join(model.detailLines(), "\n"), "second") {
+		t.Fatal("clicking an instance should update the detail view")
+	}
+}
+
+func TestKeyboardEnterOnInstanceFocusesDetails(t *testing.T) {
+	model := testModel(t)
+	model.instances = []unstructured.Unstructured{
+		{Object: map[string]interface{}{"metadata": map[string]interface{}{"name": "selected"}}},
+	}
+	model.focus = instanceFocus
+
+	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+
+	if model.focus != detailFocus || model.selectedInstance == nil || model.selectedInstance.GetName() != "selected" {
+		t.Fatalf("keyboard instance activation state = focus %v, instance %#v; want details focus and selected instance", model.focus, model.selectedInstance)
 	}
 }
 

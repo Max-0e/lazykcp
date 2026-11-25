@@ -438,7 +438,9 @@ func (m *Model) handleMouse(mouse tea.MouseMsg) tea.Cmd {
 		return m.selectCurrent()
 	case instanceFocus:
 		m.instanceCursor = index
-		return m.selectCurrent()
+		cmd := m.selectCurrent()
+		m.focus = instanceFocus
+		return cmd
 	}
 	return nil
 }
