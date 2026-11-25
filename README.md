@@ -2,15 +2,40 @@
 
 A read-only terminal UI for browsing kcp workspaces and the API resources available in each workspace.
 
+## Install
+
+The installer downloads the latest release for Linux or macOS (amd64 or arm64), verifies its SHA-256 checksum, and places `lazykcp` in `$HOME/.local/bin` without requiring `sudo`.
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Max-0e/lazykcp/main/install.sh | bash
+```
+
+Add the install directory to your `PATH` if the installer reports that it is not already present:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+To install a specific release or use a different destination, set environment variables on the installer process:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Max-0e/lazykcp/main/install.sh | LAZYKCP_VERSION=v1.0.0 INSTALL_DIR="$HOME/bin" bash
+```
+
+## Releasing
+
+Push a version tag such as `v1.0.0` to trigger the release workflow. It runs the Go tests and vet checks, then publishes checksum-verified Linux and macOS binaries for amd64 and arm64 as GitHub release assets.
+
 ## Run
 
 The kubeconfig's current context must point to a kcp workspace endpoint under `/clusters/<workspace-path>`. The application starts from that workspace and uses its credentials for all workspace requests.
 
 ```sh
-go run . --kubeconfig ~/.kube/config
+lazykcp --kubeconfig ~/.kube/config
 ```
 
 If `--kubeconfig` is omitted, the standard Kubernetes client-go kubeconfig loading rules are used.
+To run from a source checkout instead, use `go run . --kubeconfig ~/.kube/config`.
 
 For a local kcp endpoint with a self-signed certificate, you can explicitly bypass certificate verification:
 
