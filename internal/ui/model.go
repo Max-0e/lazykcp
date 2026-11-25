@@ -193,9 +193,9 @@ func (m *Model) View() string {
 	}
 	help := "↑/k ↓/j move  ←/h →/l focus/expand  enter select  / filter/search  tab focus  q quit"
 	if m.filtering {
-		help = "Filter: /" + m.filterText + "  enter apply  esc clear"
+		help = "Filter: /" + m.filterText + "  enter close  esc clear"
 	} else if m.searching {
-		help = "Search: /" + m.searchText + "  enter find  esc cancel"
+		help = "Search: /" + m.searchText + "  enter close  esc cancel"
 	} else if m.focus == detailFocus {
 		help += "  n/N next/previous  [/] or 1/2 JSON/YAML"
 	}
@@ -276,6 +276,7 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 		if m.focus == detailFocus {
 			m.searching = true
 			m.searchText = ""
+			m.findMatches()
 		} else {
 			m.filtering = true
 			m.filterText = m.filters[m.focus]
@@ -310,9 +311,11 @@ func (m *Model) handleFilterKey(key tea.KeyMsg) tea.Cmd {
 		m.resetCursor(m.focus)
 	case tea.KeyBackspace:
 		m.filterText = trimLastRune(m.filterText)
+		m.updateFilter()
 	default:
 		if key.Type == tea.KeyRunes {
 			m.filterText += string(key.Runes)
+			m.updateFilter()
 		}
 	}
 	return nil
@@ -327,11 +330,14 @@ func (m *Model) handleSearchKey(key tea.KeyMsg) tea.Cmd {
 		m.searching = false
 		m.searchText = ""
 		m.matches = nil
+		m.scroll = 0
 	case tea.KeyBackspace:
 		m.searchText = trimLastRune(m.searchText)
+		m.findMatches()
 	default:
 		if key.Type == tea.KeyRunes {
 			m.searchText += string(key.Runes)
+			m.findMatches()
 		}
 	}
 	return nil
@@ -674,6 +680,11 @@ func (m *Model) resetCursor(panel focus) {
 	}
 }
 
+func (m *Model) updateFilter() {
+	m.filters[m.focus] = m.filterText
+	m.resetCursor(m.focus)
+}
+
 func (m *Model) findWorkspace(path string) *workspaceNode {
 	var find func(*workspaceNode) *workspaceNode
 	find = func(node *workspaceNode) *workspaceNode {
@@ -705,6 +716,7 @@ func (m *Model) parentWorkspace(path string) string {
 func (m *Model) findMatches() {
 	m.matches = nil
 	m.matchIndex = 0
+	m.scroll = 0
 	if m.searchText == "" {
 		return
 	}

@@ -86,13 +86,49 @@ func TestSidebarFiltersAndDetailRepresentations(t *testing.T) {
 
 func TestSidebarSlashFilterInput(t *testing.T) {
 	model := testModel(t)
-	model.resources = []kcp.Resource{{Name: "pods", Kind: "Pod"}}
+	model.resources = []kcp.Resource{
+		{Name: "pods", Kind: "Pod"},
+		{Name: "deployments", Kind: "Deployment", Group: "apps"},
+	}
 	model.focus = resourceFocus
 	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p', 'o'}})
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if got := model.filteredResources(); len(got) != 0 {
+		t.Fatalf("resources were not filtered before Enter: %#v", got)
+	}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyBackspace})
+	if got := model.filteredResources(); len(got) != 2 {
+		t.Fatalf("backspace did not update results live: %#v", got)
+	}
 	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if model.filters[resourceFocus] != "po" {
-		t.Fatalf("resource filter = %q, want %q", model.filters[resourceFocus], "po")
+	if model.filtering {
+		t.Fatal("Enter should close the filter input")
+	}
+	if model.filters[resourceFocus] != "" {
+		t.Fatalf("resource filter = %q, want an empty filter", model.filters[resourceFocus])
+	}
+}
+
+func TestDetailSearchUpdatesMatchesBeforeEnter(t *testing.T) {
+	model := testModel(t)
+	model.focus = detailFocus
+	model.selectedInstance = &unstructured.Unstructured{Object: map[string]interface{}{
+		"kind": "ConfigMap",
+		"data": map[string]interface{}{"state": "ready"},
+	}}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	for _, char := range "ready" {
+		model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
+	}
+	if !model.searching {
+		t.Fatal("detail search should remain editable until Enter")
+	}
+	if len(model.matches) != 1 {
+		t.Fatalf("detail matches before Enter = %v, want one live match", model.matches)
+	}
+	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if model.searching {
+		t.Fatal("Enter should close the detail search input")
 	}
 }
 
