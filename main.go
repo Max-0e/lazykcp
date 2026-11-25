@@ -1,0 +1,28 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"os"
+
+	"github.com/Max-0e/lazykcp/internal/kcp"
+	"github.com/Max-0e/lazykcp/internal/ui"
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+func main() {
+	kubeconfig := flag.String("kubeconfig", "", "Path to a kubeconfig file (defaults to the standard kubeconfig loading rules)")
+	flag.Parse()
+
+	client, err := kcp.NewClient(*kubeconfig)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+
+	program := tea.NewProgram(ui.NewModel(client), tea.WithAltScreen())
+	if _, err := program.Run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
