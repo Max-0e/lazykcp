@@ -41,17 +41,9 @@ const (
 )
 
 const (
-	detailTabWidth               = 6
-	detailTabGroupWidth          = 13
-	resourceTabFullTotalWidth    = 14
-	resourceTabCompactTotalWidth = 7
-	resourceTabFullMinInnerWidth = 22
-	resourceTabFullFlatWidth     = 6
-	resourceTabFullGroupWidth    = 7
-	resourceTabCompactTabWidth   = 3
-	minPaneExtent                = 3
-	minNavigationWidth           = 20
-	minNarrowPaneWidth           = 12
+	minPaneExtent      = 3
+	minNavigationWidth = 20
+	minNarrowPaneWidth = 12
 )
 
 func (m *Model) layoutForView() viewLayout {

@@ -67,6 +67,7 @@ func TestCtrlDUPScrollsDetailsAndClamps(t *testing.T) {
 		data[fmt.Sprintf("entry-%02d", i)] = "value"
 	}
 	model.selectedInstance = &unstructured.Unstructured{Object: map[string]interface{}{"data": data}}
+	model.detailView = jsonDetailView
 	model.focus = detailFocus
 
 	model.handleKey(tea.KeyMsg{Type: tea.KeyCtrlD})

@@ -52,11 +52,12 @@ This option is off by default. It keeps traffic encrypted but disables verificat
 - Select a workspace, resource, or instance with `Enter`; use `Right`/`l` to expand a workspace and `Left`/`h` to collapse or move to its parent.
 - Move with `j`/`k` or the arrow keys; use `Ctrl+D`/`Ctrl+U` to move half a pane at a time. Use `Tab`/`Shift+Tab` or `h`/`l` to change panes; on a focused API-group heading, `h` collapses and `l` expands it.
 - Press `/` in a sidebar to filter its entries; press `/` in the detail pane to search the current representation. Use `n`/`N` to move between matches.
-- With Details focused, use `[`/`1` for JSON and `]`/`2` for YAML. With API resources focused, use `[`/`3` for Flat and `]`/`4` for Group. The bracket keys are scoped to the focused pane.
+- Details opens with an instance-focused Overview showing identity, metadata, optional status and conditions, and a compact summary of spec fields. The Overview uses only the selected object already loaded by the UI. With Details focused, press `o` for Overview, `[`/`1` for JSON, or `]`/`2` for YAML; these tabs are also clickable. Search and scrolling apply to the selected representation.
+- With API resources focused, use `[`/`3` for Flat and `]`/`4` for Group. The bracket keys are scoped to the focused pane.
 - The Group view starts with group headings collapsed; core API resources appear under `core`. Use `j`/`k` or the arrow keys to navigate headings and resources. Press `Enter` or click a group heading to expand/collapse it; use `h`/`l` or `Left`/`Right` on a heading to collapse/expand it. Nested resources are indented beneath their group.
 - Press `q` to exit.
 - Press `v` to hide or restore the resource/instance navigation panes while keeping the workspace tree visible.
-- Use the mouse wheel over a pane to focus and scroll it. Click a workspace, resource, or instance row to activate it; click a workspace `+`/`-` marker to expand or collapse that branch. Click the Flat/Group tabs in the API resources pane and the JSON/YAML tabs in Details to switch views. Drag pane borders to resize the visible splits for the current run.
+- Use the mouse wheel over a pane to focus and scroll it. Click a workspace, resource, or instance row to activate it; click a workspace `+`/`-` marker to expand or collapse that branch. Click the Flat/Group tabs in the API resources pane and the Overview/JSON/YAML tabs in Details to switch views. Drag pane borders to resize the visible splits for the current run.
 - A thumb on a pane's right border indicates the current position when its content extends beyond the visible area.
 
 The configured identity needs permission to list workspaces and the resources you want to inspect. Resource discovery and instance listing use the permissions available in the selected workspace. The initial version does not create, update, or delete resources.

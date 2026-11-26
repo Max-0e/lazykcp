@@ -108,10 +108,12 @@ func TestMouseClickDetailTabsSwitchRepresentation(t *testing.T) {
 	model.width = 120
 	model.height = 40
 	model.selectedInstance = &unstructured.Unstructured{Object: map[string]interface{}{
-		"metadata": map[string]interface{}{"name": "settings"},
-		"data":     map[string]interface{}{"theme": "dark"},
+		"apiVersion": "v1",
+		"kind":       "ConfigMap",
+		"metadata":   map[string]interface{}{"name": "settings"},
+		"data":       map[string]interface{}{"theme": "dark"},
 	}}
-	model.detailTab = 1
+	model.detailView = jsonDetailView
 	model.focus = instanceFocus
 
 	layout := model.layoutForView()
@@ -120,7 +122,12 @@ func TestMouseClickDetailTabsSwitchRepresentation(t *testing.T) {
 	if !ok || bounds.panel != detailFocus {
 		t.Fatal("could not locate the detail pane")
 	}
-	tabStart := bounds.x + 1 + bounds.width - 2 - detailTabGroupWidth
+	innerWidth := bounds.width - 2
+	_, overviewWidth, jsonWidth, _, _ := detailTabsGeometry(innerWidth)
+	tabStart := bounds.x + 1 + innerWidth - detailTabsCompactWidth
+	if innerWidth >= detailTabsFullMinInnerWidth {
+		tabStart = bounds.x + 1 + innerWidth - detailTabsFullWidth
+	}
 	clickTab := func(offset int) {
 		t.Helper()
 		sendMouse(model, tea.MouseMsg{
@@ -131,28 +138,36 @@ func TestMouseClickDetailTabsSwitchRepresentation(t *testing.T) {
 		})
 	}
 
-	clickTab(2)
-	if model.detailTab != 0 || model.focus != detailFocus {
-		t.Fatalf("JSON tab click state = tab %d, focus %v; want JSON and details focus", model.detailTab, model.focus)
+	clickTab(1)
+	if model.detailView != overviewDetailView || model.focus != detailFocus {
+		t.Fatalf("Overview tab click state = tab %d, focus %v; want Overview and details focus", model.detailView, model.focus)
+	}
+	if got := strings.Join(model.detailLines(), "\n"); !strings.Contains(got, "Kind: ConfigMap") {
+		t.Fatalf("Overview tab click did not show the summary: %s", got)
+	}
+
+	clickTab(overviewWidth + 1 + 1)
+	if model.detailView != jsonDetailView || model.focus != detailFocus {
+		t.Fatalf("JSON tab click state = tab %d, focus %v; want JSON and details focus", model.detailView, model.focus)
 	}
 	if !strings.Contains(strings.Join(model.detailLines(), "\n"), `"theme": "dark"`) {
 		t.Fatal("JSON tab click did not update the representation")
 	}
 
-	clickTab(detailTabWidth + 1 + 2)
-	if model.detailTab != 1 || model.focus != detailFocus {
-		t.Fatalf("YAML tab click state = tab %d, focus %v; want YAML and details focus", model.detailTab, model.focus)
+	clickTab(overviewWidth + jsonWidth + 2 + 1)
+	if model.detailView != yamlDetailView || model.focus != detailFocus {
+		t.Fatalf("YAML tab click state = tab %d, focus %v; want YAML and details focus", model.detailView, model.focus)
 	}
 	if !strings.Contains(strings.Join(model.detailLines(), "\n"), "theme: dark") {
 		t.Fatal("YAML tab click did not update the representation")
 	}
 	yamlHeader := ansi.Strip(strings.Split(model.renderPane(detailFocus, model.detailTitle(), model.detailLines(), bounds.width, bounds.height, true), "\n")[0])
-	model.setDetailTab(0)
+	model.setDetailTab(jsonDetailView)
 	jsonHeader := ansi.Strip(strings.Split(model.renderPane(detailFocus, model.detailTitle(), model.detailLines(), bounds.width, bounds.height, true), "\n")[0])
 	if jsonHeader == yamlHeader {
 		t.Fatal("active JSON/YAML tabs should have distinct visual styling")
 	}
-	if !strings.Contains(jsonHeader, "[JSON]| YAML") || !strings.Contains(yamlHeader, " JSON |[YAML]") {
+	if !strings.Contains(jsonHeader, "[JSON]") || !strings.Contains(yamlHeader, "[YAML]") {
 		t.Fatalf("detail tabs were not visibly rendered with the active format selected: JSON %q, YAML %q", jsonHeader, yamlHeader)
 	}
 }
@@ -231,6 +246,7 @@ func TestScrollablePanesRenderRightBorderIndicators(t *testing.T) {
 		data[fmt.Sprintf("entry-%02d", i)] = "value"
 	}
 	model.selectedInstance = &unstructured.Unstructured{Object: map[string]interface{}{"data": data}}
+	model.detailView = jsonDetailView
 	model.scroll = len(model.detailLines()) - model.paneVisibleRows(detailFocus)
 	assertBottomThumb(t, model.renderPane(detailFocus, model.detailTitle(), model.detailLines(), 32, 6, false))
 

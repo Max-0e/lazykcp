@@ -194,21 +194,21 @@ func TestResourceViewTabsAndScopedBracketShortcuts(t *testing.T) {
 
 	model.focus = detailFocus
 	sendKey(']')
-	if model.detailTab != 1 || model.resourceView != flatResourceView {
-		t.Fatalf("] in Details should select YAML only, got detail tab %d and resource view %d", model.detailTab, model.resourceView)
+	if model.detailView != yamlDetailView || model.resourceView != flatResourceView {
+		t.Fatalf("] in Details should select YAML only, got detail view %d and resource view %d", model.detailView, model.resourceView)
 	}
 	sendKey('[')
-	if model.detailTab != 0 || model.resourceView != flatResourceView {
-		t.Fatalf("[ in Details should select JSON only, got detail tab %d and resource view %d", model.detailTab, model.resourceView)
+	if model.detailView != jsonDetailView || model.resourceView != flatResourceView {
+		t.Fatalf("[ in Details should select JSON only, got detail view %d and resource view %d", model.detailView, model.resourceView)
 	}
 
 	model.focus = workspaceFocus
 	sendKey(']')
-	if model.detailTab != 0 || model.resourceView != flatResourceView {
+	if model.detailView != jsonDetailView || model.resourceView != flatResourceView {
 		t.Fatal("bracket shortcuts outside Resources and Details should not change either view")
 	}
 	sendKey('2')
-	if model.detailTab != 1 {
+	if model.detailView != yamlDetailView {
 		t.Fatal("existing 1/2 detail shortcuts should remain available")
 	}
 

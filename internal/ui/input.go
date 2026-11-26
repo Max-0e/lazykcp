@@ -100,19 +100,23 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 		case resourceFocus:
 			m.setResourceView(flatResourceView)
 		case detailFocus:
-			m.setDetailTab(0)
+			m.setDetailTab(jsonDetailView)
 		}
 	case "]":
 		switch m.focus {
 		case resourceFocus:
 			m.setResourceView(groupedResourceView)
 		case detailFocus:
-			m.setDetailTab(1)
+			m.setDetailTab(yamlDetailView)
 		}
 	case "1":
-		m.setDetailTab(0)
+		m.setDetailTab(jsonDetailView)
 	case "2":
-		m.setDetailTab(1)
+		m.setDetailTab(yamlDetailView)
+	case "o":
+		if m.focus == detailFocus {
+			m.setDetailTab(overviewDetailView)
+		}
 	case "3":
 		if m.focus == resourceFocus {
 			m.setResourceView(flatResourceView)

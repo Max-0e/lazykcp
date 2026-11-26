@@ -123,8 +123,8 @@ func (m *Model) currentMatchLine() int {
 	return m.matches[m.matchIndex]
 }
 
-func (m *Model) setDetailTab(tab int) {
-	m.detailTab = tab
+func (m *Model) setDetailTab(tab detailView) {
+	m.detailView = tab
 	if m.searchText != "" {
 		m.findMatches()
 	}

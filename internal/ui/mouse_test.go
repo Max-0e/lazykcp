@@ -26,6 +26,7 @@ func TestMouseWheelTargetsHoveredPane(t *testing.T) {
 		data[fmt.Sprintf("entry-%02d", i)] = "value"
 	}
 	model.selectedInstance = &unstructured.Unstructured{Object: map[string]interface{}{"data": data}}
+	model.detailView = jsonDetailView
 
 	layout := model.layoutForView()
 	lowerY := 1 + layout.workspaceHeight

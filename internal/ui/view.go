@@ -1,12 +1,24 @@
 package ui
 
 import (
-	"encoding/json"
-	"fmt"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"sigs.k8s.io/yaml"
+)
+
+const (
+	detailTabsFullWidth          = 24
+	detailTabsCompactWidth       = 11
+	detailTabsFullMinInnerWidth  = 32
+	detailOverviewTabFullWidth   = 10
+	detailFormatTabFullWidth     = 6
+	detailTabCompactWidth        = 3
+	resourceTabFullTotalWidth    = 14
+	resourceTabCompactTotalWidth = 7
+	resourceTabFullMinInnerWidth = 22
+	resourceTabFullFlatWidth     = 6
+	resourceTabFullGroupWidth    = 7
+	resourceTabCompactTabWidth   = 3
 )
 
 func (m *Model) View() string {
@@ -71,7 +83,7 @@ func (m *Model) View() string {
 	} else if m.searching {
 		help = "Search: /" + m.searchText + "  enter close  esc cancel"
 	} else if m.focus == detailFocus {
-		help += "  n/N next/previous  1/2 JSON/YAML"
+		help += "  n/N next/previous  o Overview  1/2 JSON/YAML"
 	}
 	if lipgloss.Width(help) > m.width {
 		help = clip(help, m.width)
@@ -120,38 +132,6 @@ func (m *Model) instanceLines() []string {
 	return lines
 }
 
-func (m *Model) detailTitle() string {
-	tab := "JSON"
-	if m.detailTab == 1 {
-		tab = "YAML"
-	}
-	if m.selectedInstance == nil {
-		return "Resource detail"
-	}
-	return fmt.Sprintf("%s · %s", m.selectedInstance.GetName(), tab)
-}
-
-func (m *Model) detailLines() []string {
-	if m.selectedInstance == nil {
-		return []string{"Select an instance to inspect"}
-	}
-	var data []byte
-	var err error
-	if m.detailTab == 0 {
-		data, err = json.MarshalIndent(m.selectedInstance.Object, "", "  ")
-	} else {
-		var jsonData []byte
-		jsonData, err = json.Marshal(m.selectedInstance.Object)
-		if err == nil {
-			data, err = yaml.JSONToYAML(jsonData)
-		}
-	}
-	if err != nil {
-		return []string{"Unable to serialize object: " + err.Error()}
-	}
-	return strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-}
-
 func (m *Model) renderPane(panel focus, title string, lines []string, width, height int, focused bool) string {
 	innerWidth := max(1, width-2)
 	innerHeight := max(1, height-2)
@@ -194,8 +174,8 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 	titleWidth := innerWidth
 	tabsWidth := 0
 	if showDetailTabs {
-		titleWidth = max(0, innerWidth-detailTabGroupWidth)
-		tabsWidth = detailTabGroupWidth
+		tabsWidth, _, _, _, _ = detailTabsGeometry(innerWidth)
+		titleWidth = max(0, innerWidth-tabsWidth)
 	} else if showResourceTabs {
 		tabsWidth, _, _ = resourceTabGeometry(innerWidth, query != "")
 		titleWidth = max(0, innerWidth-tabsWidth)
@@ -206,7 +186,7 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 		titleStyle.Render(label) +
 		borderStyle.Render(strings.Repeat(border.Top, topFill))
 	if showDetailTabs {
-		top += m.renderDetailTabs(borderStyle)
+		top += m.renderDetailTabs(borderStyle, innerWidth)
 	} else if showResourceTabs {
 		top += m.renderResourceTabs(borderStyle, innerWidth, query != "")
 	}
@@ -222,6 +202,8 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 		line += strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(line)))
 		if panel == detailFocus && focused && index == m.currentMatchLine() {
 			line = lipgloss.NewStyle().Background(lipgloss.Color("220")).Foreground(lipgloss.Color("0")).Render(line)
+		} else if panel == detailFocus && m.detailView == overviewDetailView && index < len(lines) && overviewSectionHeading(lines[index]) {
+			line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Render(line)
 		} else if panel != detailFocus && index == selected {
 			if focused {
 				line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Background(lipgloss.Color("235")).Bold(true).Render(line)
@@ -271,23 +253,48 @@ func renderPaneTitle(title, query string, width int) string {
 	return " " + clip(title, titleWidth) + " " + queryLabel + " "
 }
 
-func (m *Model) renderDetailTabs(borderStyle lipgloss.Style) string {
+func (m *Model) renderDetailTabs(borderStyle lipgloss.Style, innerWidth int) string {
 	active := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("205")).Bold(true)
 	inactive := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	jsonTab := inactive
-	yamlTab := inactive
-	jsonLabel := " JSON "
-	yamlLabel := " YAML "
-	if m.detailTab == 0 {
-		jsonTab = active
-		jsonLabel = "[JSON]"
-	} else {
-		yamlTab = active
-		yamlLabel = "[YAML]"
+	_, overviewWidth, jsonWidth, yamlWidth, compact := detailTabsGeometry(innerWidth)
+	tabs := []struct {
+		view  detailView
+		style lipgloss.Style
+		label string
+	}{
+		{view: overviewDetailView, style: inactive, label: " Overview "},
+		{view: jsonDetailView, style: inactive, label: " JSON "},
+		{view: yamlDetailView, style: inactive, label: " YAML "},
 	}
-	return jsonTab.Render(jsonLabel) +
-		borderStyle.Render("|") +
-		yamlTab.Render(yamlLabel)
+	widths := []int{overviewWidth, jsonWidth, yamlWidth}
+	if compact {
+		for i, label := range []string{"O", "J", "Y"} {
+			tabs[i].label = " " + label + " "
+			if tabs[i].view == m.detailView {
+				tabs[i].label = "[" + label + "]"
+			}
+		}
+	} else {
+		for i, tab := range tabs {
+			if tab.view == m.detailView {
+				tabs[i].label = "[" + strings.TrimSpace(tab.label) + "]"
+			}
+		}
+	}
+	var rendered strings.Builder
+	for i := range tabs {
+		if i > 0 {
+			rendered.WriteString(borderStyle.Render("|"))
+		}
+		if tabs[i].view == m.detailView {
+			tabs[i].style = active
+		}
+		if lipgloss.Width(tabs[i].label) != widths[i] {
+			tabs[i].label = clip(tabs[i].label, widths[i])
+		}
+		rendered.WriteString(tabs[i].style.Render(tabs[i].label))
+	}
+	return rendered.String()
 }
 
 func (m *Model) renderResourceTabs(borderStyle lipgloss.Style, innerWidth int, compact bool) string {
@@ -321,16 +328,27 @@ func (m *Model) renderResourceTabs(borderStyle lipgloss.Style, innerWidth int, c
 		groupTab.Render(groupLabel)
 }
 
-func detailTabAt(bounds paneBounds, x int) (int, bool) {
-	start := bounds.x + 1 + max(0, bounds.width-2-detailTabGroupWidth)
+func detailTabsGeometry(innerWidth int) (totalWidth, overviewWidth, jsonWidth, yamlWidth int, compact bool) {
+	if innerWidth >= detailTabsFullMinInnerWidth {
+		return detailTabsFullWidth, detailOverviewTabFullWidth, detailFormatTabFullWidth, detailFormatTabFullWidth, false
+	}
+	return detailTabsCompactWidth, detailTabCompactWidth, detailTabCompactWidth, detailTabCompactWidth, true
+}
+
+func detailTabAt(bounds paneBounds, x int) (detailView, bool) {
+	innerWidth := max(1, bounds.width-2)
+	totalWidth, overviewWidth, jsonWidth, yamlWidth, _ := detailTabsGeometry(innerWidth)
+	start := bounds.x + 1 + innerWidth - totalWidth
 	offset := x - start
 	switch {
-	case offset >= 0 && offset < detailTabWidth:
-		return 0, true
-	case offset >= detailTabWidth+1 && offset < detailTabGroupWidth:
-		return 1, true
+	case offset >= 0 && offset < overviewWidth:
+		return overviewDetailView, true
+	case offset >= overviewWidth+1 && offset < overviewWidth+1+jsonWidth:
+		return jsonDetailView, true
+	case offset >= overviewWidth+jsonWidth+2 && offset < overviewWidth+jsonWidth+2+yamlWidth:
+		return yamlDetailView, true
 	default:
-		return 0, false
+		return overviewDetailView, false
 	}
 }
 

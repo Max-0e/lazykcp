@@ -59,7 +59,7 @@ type Model struct {
 	searchText             string
 	matches                []int
 	matchIndex             int
-	detailTab              int
+	detailView             detailView
 	scroll                 int
 	detailOnly             bool
 	paneSizes              paneSizes
@@ -84,8 +84,9 @@ func NewModel(client *kcp.Client) *Model {
 		root:            root,
 		activeWorkspace: rootPath,
 		workspaceCursor: rootPath,
-		focus:           workspaceFocus,
-		loading:         "Loading workspaces",
+		focus:            workspaceFocus,
+		detailView:       overviewDetailView,
+		loading:          "Loading workspaces",
 	}
 }
 

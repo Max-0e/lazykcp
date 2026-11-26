@@ -37,7 +37,7 @@ func TestSidebarFiltersAndDetailRepresentations(t *testing.T) {
 		"metadata":   map[string]interface{}{"name": "settings"},
 		"data":       map[string]interface{}{"theme": "dark"},
 	}}
-	model.detailTab = 0
+	model.detailView = jsonDetailView
 	if got := strings.Join(model.detailLines(), "\n"); !strings.Contains(got, `"theme": "dark"`) {
 		t.Fatalf("JSON detail missing instance data: %s", got)
 	}
@@ -46,7 +46,7 @@ func TestSidebarFiltersAndDetailRepresentations(t *testing.T) {
 	if len(model.matches) != 1 {
 		t.Fatalf("JSON search matches = %v, want one match", model.matches)
 	}
-	model.setDetailTab(1)
+	model.setDetailTab(yamlDetailView)
 	if got := strings.Join(model.detailLines(), "\n"); !strings.Contains(got, "theme: dark") {
 		t.Fatalf("YAML detail missing instance data: %s", got)
 	}
@@ -87,6 +87,7 @@ func TestDetailSearchUpdatesMatchesBeforeEnter(t *testing.T) {
 		"kind": "ConfigMap",
 		"data": map[string]interface{}{"state": "ready"},
 	}}
+	model.detailView = jsonDetailView
 	model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	for _, char := range "ready" {
 		model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{char}})
