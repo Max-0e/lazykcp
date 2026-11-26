@@ -1,6 +1,6 @@
 # lazykcp
 
-A read-only terminal UI for browsing kcp workspaces and the API resources available in each workspace.
+A lightweight (currently read-only) terminal UI for browsing kcp workspaces and the API resources available in each workspace.
 
 ## Install
 
