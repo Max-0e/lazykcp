@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Max-0e/lazykcp/internal/kcp"
@@ -43,6 +44,19 @@ type paneBounds struct {
 	height int
 }
 
+type resourceView int
+
+const (
+	flatResourceView resourceView = iota
+	groupedResourceView
+)
+
+type resourceRow struct {
+	group         string
+	resourceIndex int
+	groupHeader   bool
+}
+
 type paneSizes struct {
 	workspaceHeight  int
 	navigationWidth  int
@@ -63,11 +77,17 @@ const (
 )
 
 const (
-	detailTabWidth      = 6
-	detailTabGroupWidth = 13
-	minPaneExtent       = 3
-	minNavigationWidth  = 20
-	minNarrowPaneWidth  = 12
+	detailTabWidth               = 6
+	detailTabGroupWidth          = 13
+	resourceTabFullTotalWidth    = 14
+	resourceTabCompactTotalWidth = 7
+	resourceTabFullMinInnerWidth = 22
+	resourceTabFullFlatWidth     = 6
+	resourceTabFullGroupWidth    = 7
+	resourceTabCompactTabWidth   = 3
+	minPaneExtent                = 3
+	minNavigationWidth           = 20
+	minNarrowPaneWidth           = 12
 )
 
 type workspaceNode struct {
@@ -108,22 +128,24 @@ type Model struct {
 	selectedResource *kcp.Resource
 	selectedInstance *unstructured.Unstructured
 
-	resources   []kcp.Resource
-	instances   []unstructured.Unstructured
-	focus       focus
-	filters     [3]string
-	filtering   bool
-	filterText  string
-	searching   bool
-	searchText  string
-	matches     []int
-	matchIndex  int
-	detailTab   int
-	scroll      int
-	detailOnly  bool
-	paneSizes   paneSizes
-	dragDivider divider
-	dragOffset  int
+	resources               []kcp.Resource
+	instances               []unstructured.Unstructured
+	resourceView            resourceView
+	collapsedResourceGroups map[string]bool
+	focus                   focus
+	filters                 [3]string
+	filtering               bool
+	filterText              string
+	searching               bool
+	searchText              string
+	matches                 []int
+	matchIndex              int
+	detailTab               int
+	scroll                  int
+	detailOnly              bool
+	paneSizes               paneSizes
+	dragDivider             divider
+	dragOffset              int
 
 	width   int
 	height  int
@@ -271,9 +293,9 @@ func (m *Model) View() string {
 		detailPane := m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane)
 	}
-	help := "j/k move ^D/^U page enter select / filter tab focus v nav mouse drag"
+	help := "j/k move ^D/^U page enter select / filter [] pane tab 3/4 view tab focus v nav mouse drag"
 	if m.width >= 90 {
-		help = "↑↓/jk move  Ctrl+D/U page  h/l focus  enter select  / filter  tab focus  v nav  mouse drag borders"
+		help = "↑↓/jk move  Ctrl+D/U page  h/l focus  enter select  / filter  [] pane tab  3/4 resource view  v nav  mouse drag"
 	}
 	if m.width < 90 {
 		if m.detailOnly {
@@ -556,6 +578,12 @@ func (m *Model) handleMouse(mouse tea.MouseMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if bounds.panel == resourceFocus && mouse.Y == bounds.y {
+		if tab, ok := m.resourceTabAt(bounds, mouse.X); ok {
+			m.setResourceView(tab)
+		}
+		return nil
+	}
 
 	row := mouse.Y - bounds.y - 1
 	index := start + row
@@ -580,7 +608,15 @@ func (m *Model) handleMouse(mouse tea.MouseMsg) tea.Cmd {
 		m.workspaceCursor = node.path
 		return m.selectCurrent()
 	case resourceFocus:
+		rows := m.resourceRows()
+		if index >= len(rows) {
+			return nil
+		}
 		m.resourceCursor = index
+		if rows[index].groupHeader {
+			m.toggleResourceGroup(rows[index].group)
+			return nil
+		}
 		return m.selectCurrent()
 	case instanceFocus:
 		m.instanceCursor = index
@@ -644,6 +680,8 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 	case tea.KeyLeft:
 		if m.focus == workspaceFocus {
 			m.collapseWorkspace()
+		} else if m.focus == resourceFocus && m.collapseResourceGroup() {
+			return nil
 		} else {
 			m.changeFocus(-1)
 		}
@@ -651,6 +689,8 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 	case tea.KeyRight:
 		if m.focus == workspaceFocus {
 			return m.expandWorkspace()
+		} else if m.focus == resourceFocus && m.expandResourceGroup() {
+			return nil
 		}
 		m.changeFocus(1)
 		return nil
@@ -701,13 +741,31 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 	case "N":
 		m.moveMatch(-1)
 	case "[":
-		m.setDetailTab(0)
+		switch m.focus {
+		case resourceFocus:
+			m.setResourceView(flatResourceView)
+		case detailFocus:
+			m.setDetailTab(0)
+		}
 	case "]":
-		m.setDetailTab(1)
+		switch m.focus {
+		case resourceFocus:
+			m.setResourceView(groupedResourceView)
+		case detailFocus:
+			m.setDetailTab(1)
+		}
 	case "1":
 		m.setDetailTab(0)
 	case "2":
 		m.setDetailTab(1)
+	case "3":
+		if m.focus == resourceFocus {
+			m.setResourceView(flatResourceView)
+		}
+	case "4":
+		if m.focus == resourceFocus {
+			m.setResourceView(groupedResourceView)
+		}
 	case "v":
 		m.toggleDetailOnly()
 	}
@@ -771,8 +829,8 @@ func (m *Model) move(delta int) tea.Cmd {
 		index = clamp(index+delta, 0, len(items)-1)
 		m.workspaceCursor = items[index].path
 	case resourceFocus:
-		items := m.filteredResources()
-		m.resourceCursor = clamp(m.resourceCursor+delta, 0, max(0, len(items)-1))
+		rows := m.resourceRows()
+		m.resourceCursor = clamp(m.resourceCursor+delta, 0, max(0, len(rows)-1))
 	case instanceFocus:
 		items := m.filteredInstances()
 		m.instanceCursor = clamp(m.instanceCursor+delta, 0, max(0, len(items)-1))
@@ -835,11 +893,17 @@ func (m *Model) selectCurrent() tea.Cmd {
 		}
 		return tea.Batch(cmds...)
 	case resourceFocus:
-		items := m.filteredResources()
-		if len(items) == 0 {
+		rows := m.resourceRows()
+		if len(rows) == 0 {
 			return nil
 		}
-		selected := items[clamp(m.resourceCursor, 0, len(items)-1)]
+		row := rows[clamp(m.resourceCursor, 0, len(rows)-1)]
+		if row.groupHeader {
+			m.toggleResourceGroup(row.group)
+			return nil
+		}
+		items := m.filteredResources()
+		selected := items[row.resourceIndex]
 		m.selectedResource = &selected
 		m.instances = nil
 		m.selectedInstance = nil
@@ -935,15 +999,176 @@ func (m *Model) workspaceMarker(node *workspaceNode) string {
 
 func (m *Model) resourceLines() []string {
 	items := m.filteredResources()
-	lines := make([]string, len(items))
-	for i, resource := range items {
-		group := resource.Group
-		if group == "" {
-			group = "core"
+	rows := m.resourceRows()
+	lines := make([]string, len(rows))
+	for i, row := range rows {
+		if row.groupHeader {
+			marker := "-"
+			if m.collapsedResourceGroups[row.group] {
+				marker = "+"
+			}
+			lines[i] = marker + " " + resourceGroupName(row.group)
+			continue
 		}
-		lines[i] = resource.Name + " (" + group + ")"
+		resource := items[row.resourceIndex]
+		if m.resourceView == groupedResourceView {
+			lines[i] = "  " + resource.Name
+			continue
+		}
+		lines[i] = resource.Name + " (" + resourceGroupName(resource.Group) + ")"
 	}
 	return lines
+}
+
+func resourceGroupName(group string) string {
+	if group == "" {
+		return "core"
+	}
+	return group
+}
+
+func (m *Model) resourceRows() []resourceRow {
+	items := m.filteredResources()
+	if m.resourceView == flatResourceView {
+		rows := make([]resourceRow, len(items))
+		for i, resource := range items {
+			rows[i] = resourceRow{group: resource.Group, resourceIndex: i}
+		}
+		return rows
+	}
+	groups := make(map[string][]int)
+	groupNames := make([]string, 0)
+	for i, resource := range items {
+		group := resource.Group
+		if _, exists := groups[group]; !exists {
+			groupNames = append(groupNames, group)
+		}
+		groups[group] = append(groups[group], i)
+	}
+	sort.Strings(groupNames)
+
+	var rows []resourceRow
+	for _, group := range groupNames {
+		rows = append(rows, resourceRow{group: group, groupHeader: true})
+		if m.collapsedResourceGroups[group] {
+			continue
+		}
+		for _, resourceIndex := range groups[group] {
+			rows = append(rows, resourceRow{group: group, resourceIndex: resourceIndex})
+		}
+	}
+	return rows
+}
+
+func (m *Model) setResourceView(view resourceView) {
+	if view != flatResourceView && view != groupedResourceView || view == m.resourceView {
+		return
+	}
+
+	items := m.filteredResources()
+	var current resourceRow
+	hasCurrent := false
+	rows := m.resourceRows()
+	if len(rows) > 0 {
+		cursor := clamp(m.resourceCursor, 0, len(rows)-1)
+		current = rows[cursor]
+		hasCurrent = true
+	}
+	var currentResource kcp.Resource
+	hasCurrentResource := hasCurrent && !current.groupHeader && current.resourceIndex >= 0 && current.resourceIndex < len(items)
+	if hasCurrentResource {
+		currentResource = items[current.resourceIndex]
+	}
+
+	m.resourceView = view
+	newRows := m.resourceRows()
+	target := -1
+	if hasCurrentResource {
+		groupHeader := -1
+		newItems := m.filteredResources()
+		for i, row := range newRows {
+			if row.groupHeader {
+				if row.group == currentResource.Group {
+					groupHeader = i
+				}
+				continue
+			}
+			resource := newItems[row.resourceIndex]
+			if resource.Group == currentResource.Group &&
+				resource.Version == currentResource.Version &&
+				resource.Name == currentResource.Name {
+				target = i
+				break
+			}
+		}
+		if target < 0 {
+			target = groupHeader
+		}
+	} else if hasCurrent && current.groupHeader {
+		if view == groupedResourceView {
+			for i, row := range newRows {
+				if row.groupHeader && row.group == current.group {
+					target = i
+					break
+				}
+			}
+		} else {
+			newItems := m.filteredResources()
+			for i, resource := range newItems {
+				if resource.Group == current.group {
+					target = i
+					break
+				}
+			}
+		}
+	}
+	if target < 0 {
+		target = 0
+	}
+	m.resourceCursor = clamp(target, 0, max(0, len(newRows)-1))
+}
+
+func (m *Model) toggleResourceGroup(group string) {
+	if m.collapsedResourceGroups == nil {
+		m.collapsedResourceGroups = make(map[string]bool)
+	}
+	m.collapsedResourceGroups[group] = !m.collapsedResourceGroups[group]
+}
+
+func (m *Model) focusedResourceGroup() (string, bool) {
+	if m.resourceView != groupedResourceView {
+		return "", false
+	}
+	rows := m.resourceRows()
+	if len(rows) == 0 {
+		return "", false
+	}
+	row := rows[clamp(m.resourceCursor, 0, len(rows)-1)]
+	if !row.groupHeader {
+		return "", false
+	}
+	return row.group, true
+}
+
+func (m *Model) collapseResourceGroup() bool {
+	group, ok := m.focusedResourceGroup()
+	if !ok {
+		return false
+	}
+	if m.collapsedResourceGroups == nil {
+		m.collapsedResourceGroups = make(map[string]bool)
+	}
+	m.collapsedResourceGroups[group] = true
+	return true
+}
+
+func (m *Model) expandResourceGroup() bool {
+	group, ok := m.focusedResourceGroup()
+	if !ok {
+		return false
+	}
+	delete(m.collapsedResourceGroups, group)
+	return true
 }
 
 func (m *Model) instanceLines() []string {
@@ -994,8 +1219,9 @@ func (m *Model) detailLines() []string {
 func (m *Model) renderPane(panel focus, title string, lines []string, width, height int, focused bool) string {
 	innerWidth := max(1, width-2)
 	innerHeight := max(1, height-2)
-	showTabs := panel == detailFocus && m.selectedInstance != nil
-	if showTabs {
+	showDetailTabs := panel == detailFocus && m.selectedInstance != nil
+	showResourceTabs := panel == resourceFocus
+	if showDetailTabs {
 		title = m.selectedInstance.GetName()
 	}
 	query := m.queryForPanel(panel)
@@ -1031,17 +1257,22 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 	titleStyle := lipgloss.NewStyle().Foreground(titleColor).Bold(true)
 	titleWidth := innerWidth
 	tabsWidth := 0
-	if showTabs {
+	if showDetailTabs {
 		titleWidth = max(0, innerWidth-detailTabGroupWidth)
 		tabsWidth = detailTabGroupWidth
+	} else if showResourceTabs {
+		tabsWidth, _, _ = resourceTabGeometry(innerWidth, query != "")
+		titleWidth = max(0, innerWidth-tabsWidth)
 	}
 	label := renderPaneTitle(title, query, titleWidth)
 	topFill := max(0, innerWidth-lipgloss.Width(label)-tabsWidth)
 	top := borderStyle.Render(border.TopLeft) +
 		titleStyle.Render(label) +
 		borderStyle.Render(strings.Repeat(border.Top, topFill))
-	if showTabs {
+	if showDetailTabs {
 		top += m.renderDetailTabs(borderStyle)
+	} else if showResourceTabs {
+		top += m.renderResourceTabs(borderStyle, innerWidth, query != "")
 	}
 	top += borderStyle.Render(border.TopRight)
 	for row := 0; row < innerHeight; row++ {
@@ -1123,6 +1354,37 @@ func (m *Model) renderDetailTabs(borderStyle lipgloss.Style) string {
 		yamlTab.Render(yamlLabel)
 }
 
+func (m *Model) renderResourceTabs(borderStyle lipgloss.Style, innerWidth int, compact bool) string {
+	active := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(lipgloss.Color("205")).Bold(true)
+	inactive := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	flatTab := inactive
+	groupTab := inactive
+	flatLabel := " Flat "
+	groupLabel := " Group "
+	if !compact && innerWidth >= resourceTabFullMinInnerWidth {
+		if m.resourceView == flatResourceView {
+			flatTab = active
+			flatLabel = "[Flat]"
+		} else {
+			groupTab = active
+			groupLabel = "[Group]"
+		}
+	} else {
+		flatLabel = " F "
+		groupLabel = " G "
+		if m.resourceView == flatResourceView {
+			flatTab = active
+			flatLabel = "[F]"
+		} else {
+			groupTab = active
+			groupLabel = "[G]"
+		}
+	}
+	return flatTab.Render(flatLabel) +
+		borderStyle.Render("|") +
+		groupTab.Render(groupLabel)
+}
+
 func detailTabAt(bounds paneBounds, x int) (int, bool) {
 	start := bounds.x + 1 + max(0, bounds.width-2-detailTabGroupWidth)
 	offset := x - start
@@ -1133,6 +1395,28 @@ func detailTabAt(bounds paneBounds, x int) (int, bool) {
 		return 1, true
 	default:
 		return 0, false
+	}
+}
+
+func resourceTabGeometry(innerWidth int, compact bool) (totalWidth, flatWidth, groupWidth int) {
+	if !compact && innerWidth >= resourceTabFullMinInnerWidth {
+		return resourceTabFullTotalWidth, resourceTabFullFlatWidth, resourceTabFullGroupWidth
+	}
+	return resourceTabCompactTotalWidth, resourceTabCompactTabWidth, resourceTabCompactTabWidth
+}
+
+func (m *Model) resourceTabAt(bounds paneBounds, x int) (resourceView, bool) {
+	innerWidth := max(1, bounds.width-2)
+	totalWidth, flatWidth, groupWidth := resourceTabGeometry(innerWidth, m.queryForPanel(resourceFocus) != "")
+	start := bounds.x + 1 + innerWidth - totalWidth
+	offset := x - start
+	switch {
+	case offset >= 0 && offset < flatWidth:
+		return flatResourceView, true
+	case offset >= flatWidth+1 && offset < flatWidth+1+groupWidth:
+		return groupedResourceView, true
+	default:
+		return flatResourceView, false
 	}
 }
 
@@ -1159,11 +1443,11 @@ func (m *Model) selectedLineIndex(panel focus) int {
 		}
 		return -1
 	case resourceFocus:
-		items := m.filteredResources()
-		if len(items) == 0 {
+		rows := m.resourceRows()
+		if len(rows) == 0 {
 			return -1
 		}
-		return clamp(m.resourceCursor, 0, len(items)-1)
+		return clamp(m.resourceCursor, 0, len(rows)-1)
 	case instanceFocus:
 		items := m.filteredInstances()
 		if len(items) == 0 {
@@ -1207,7 +1491,7 @@ func (m *Model) filteredResources() []kcp.Resource {
 	}
 	var filtered []kcp.Resource
 	for _, resource := range m.resources {
-		value := resource.Name + " " + resource.Kind + " " + resource.Group
+		value := resource.Name + " " + resource.Kind + " " + resource.Group + " " + resourceGroupName(resource.Group)
 		if strings.Contains(strings.ToLower(value), filter) {
 			filtered = append(filtered, resource)
 		}
