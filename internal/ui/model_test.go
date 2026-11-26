@@ -503,45 +503,80 @@ func TestGroupedResourceViewPreservesSelectionAndCollapsesGroups(t *testing.T) {
 	model.focus = resourceFocus
 	model.setResourceView(groupedResourceView)
 
-	want := "- core\n  pods\n- apps\n  deployments\n  replicasets\n- batch\n  jobs"
+	want := "+ core\n+ apps\n+ batch"
 	if got := strings.Join(model.resourceLines(), "\n"); got != want {
 		t.Fatalf("grouped resource rows =\n%s\nwant:\n%s", got, want)
 	}
-	if model.resourceCursor != 4 {
-		t.Fatalf("resource cursor after grouping = %d, want the same replicasets resource at row 4", model.resourceCursor)
+	if model.resourceCursor != 1 {
+		t.Fatalf("resource cursor after grouping = %d, want the collapsed apps heading at row 1", model.resourceCursor)
 	}
 	if model.selectedResource == nil || model.selectedResource.Name != "pods" {
 		t.Fatalf("switching views changed selected resource: %#v", model.selectedResource)
 	}
 
 	model.filters[resourceFocus] = "core"
-	if got, want := strings.Join(model.resourceLines(), "\n"), "- core\n  pods"; got != want {
+	if got, want := strings.Join(model.resourceLines(), "\n"), "+ core"; got != want {
 		t.Fatalf("filtering by the core API group =\n%s\nwant:\n%s", got, want)
 	}
 	model.filters[resourceFocus] = "apps"
-	if got, want := strings.Join(model.resourceLines(), "\n"), "- apps\n  deployments\n  replicasets"; got != want {
+	if got, want := strings.Join(model.resourceLines(), "\n"), "+ apps"; got != want {
 		t.Fatalf("filtering by an API group =\n%s\nwant:\n%s", got, want)
 	}
 	model.filters[resourceFocus] = ""
 
-	model.resourceCursor = 2
+	sendKey := func(key rune) {
+		t.Helper()
+		model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+	}
+	model.resourceCursor = 1
+	sendKey('h')
+	if model.focus != resourceFocus || model.expandedResourceGroups["apps"] {
+		t.Fatal("h on a collapsed group heading should keep resource focus and leave it collapsed")
+	}
+	sendKey('l')
+	if !model.expandedResourceGroups["apps"] {
+		t.Fatal("l on a collapsed group heading should expand it")
+	}
+	sendKey('h')
+	if model.focus != resourceFocus || model.expandedResourceGroups["apps"] {
+		t.Fatal("h on an expanded group heading should collapse it without changing focus")
+	}
+	sendKey('l')
+	if !model.expandedResourceGroups["apps"] {
+		t.Fatal("l on a collapsed group heading should expand it again")
+	}
+	want = "+ core\n- apps\n    deployments\n    replicasets\n+ batch"
+	if got := strings.Join(model.resourceLines(), "\n"); got != want {
+		t.Fatalf("expanded grouped resource rows =\n%s\nwant:\n%s", got, want)
+	}
 	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	if !model.collapsedResourceGroups["apps"] || strings.Contains(strings.Join(model.resourceLines(), "\n"), "deployments") {
+	if model.expandedResourceGroups["apps"] {
 		t.Fatal("Enter on the apps group should collapse its resource rows")
 	}
-	model.handleKey(tea.KeyMsg{Type: tea.KeyRight})
-	if model.collapsedResourceGroups["apps"] {
-		t.Fatal("Right on the apps group should expand it")
+	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !model.expandedResourceGroups["apps"] {
+		t.Fatal("Enter on the collapsed apps group should expand its resource rows")
 	}
+
 	model.move(1)
 	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	if model.selectedResource == nil || model.selectedResource.Name != "deployments" {
 		t.Fatalf("selecting a grouped resource chose %#v, want deployments", model.selectedResource)
 	}
+	sendKey('h')
+	if model.focus != workspaceFocus {
+		t.Fatal("h on a resource row should keep its pane-navigation behavior")
+	}
+	model.focus = resourceFocus
+	sendKey('l')
+	if model.focus != instanceFocus {
+		t.Fatal("l on a resource row should keep its pane-navigation behavior")
+	}
 
-	model.resourceCursor = 2
+	model.focus = resourceFocus
+	model.resourceCursor = 1
 	model.handleKey(tea.KeyMsg{Type: tea.KeyLeft})
-	if !model.collapsedResourceGroups["apps"] {
+	if model.expandedResourceGroups["apps"] {
 		t.Fatal("Left on the apps group should collapse it")
 	}
 	model.setResourceView(flatResourceView)
@@ -549,8 +584,8 @@ func TestGroupedResourceViewPreservesSelectionAndCollapsesGroups(t *testing.T) {
 		t.Fatalf("switching from a group heading to Flat should select its first resource, got cursor %d", model.resourceCursor)
 	}
 	model.setResourceView(groupedResourceView)
-	if model.resourceCursor != 2 || !model.collapsedResourceGroups["apps"] {
-		t.Fatalf("view switch should preserve the collapsed apps group: cursor=%d collapsed=%v", model.resourceCursor, model.collapsedResourceGroups["apps"])
+	if model.resourceCursor != 1 || model.expandedResourceGroups["apps"] {
+		t.Fatalf("view switch should preserve the collapsed apps group: cursor=%d expanded=%v", model.resourceCursor, model.expandedResourceGroups["apps"])
 	}
 }
 
@@ -685,15 +720,19 @@ func TestMouseGroupHeadersToggleAndResourceRowsSelect(t *testing.T) {
 		})
 	}
 
-	clickRow(2)
-	if !model.collapsedResourceGroups["apps"] {
-		t.Fatal("clicking the apps heading should collapse the group")
+	if got, want := strings.Join(model.resourceLines(), "\n"), "+ core\n+ apps"; got != want {
+		t.Fatalf("groups should start collapsed, got %q want %q", got, want)
 	}
-	clickRow(2)
-	if model.collapsedResourceGroups["apps"] {
+	clickRow(1)
+	if !model.expandedResourceGroups["apps"] {
 		t.Fatal("clicking the collapsed apps heading should expand the group")
 	}
-	clickRow(3)
+	clickRow(1)
+	if model.expandedResourceGroups["apps"] {
+		t.Fatal("clicking the expanded apps heading should collapse the group")
+	}
+	clickRow(1)
+	clickRow(2)
 	if model.selectedResource == nil || model.selectedResource.Name != "deployments" {
 		t.Fatalf("clicking a grouped resource selected %#v, want deployments", model.selectedResource)
 	}
@@ -754,6 +793,7 @@ func TestScrollablePanesRenderRightBorderIndicators(t *testing.T) {
 	model.resourceCursor = len(model.resources) - 1
 	assertBottomThumb(t, model.renderPane(resourceFocus, "API resources", model.resourceLines(), 32, 6, false))
 	model.resourceView = groupedResourceView
+	model.expandedResourceGroups = map[string]bool{"": true}
 	model.resourceCursor = len(model.resourceLines()) - 1
 	assertBottomThumb(t, model.renderPane(resourceFocus, "API resources", model.resourceLines(), 32, 6, false))
 	model.resourceView = flatResourceView

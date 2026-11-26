@@ -128,24 +128,24 @@ type Model struct {
 	selectedResource *kcp.Resource
 	selectedInstance *unstructured.Unstructured
 
-	resources               []kcp.Resource
-	instances               []unstructured.Unstructured
-	resourceView            resourceView
-	collapsedResourceGroups map[string]bool
-	focus                   focus
-	filters                 [3]string
-	filtering               bool
-	filterText              string
-	searching               bool
-	searchText              string
-	matches                 []int
-	matchIndex              int
-	detailTab               int
-	scroll                  int
-	detailOnly              bool
-	paneSizes               paneSizes
-	dragDivider             divider
-	dragOffset              int
+	resources              []kcp.Resource
+	instances              []unstructured.Unstructured
+	resourceView           resourceView
+	expandedResourceGroups map[string]bool
+	focus                  focus
+	filters                [3]string
+	filtering              bool
+	filterText             string
+	searching              bool
+	searchText             string
+	matches                []int
+	matchIndex             int
+	detailTab              int
+	scroll                 int
+	detailOnly             bool
+	paneSizes              paneSizes
+	dragDivider            divider
+	dragOffset             int
 
 	width   int
 	height  int
@@ -293,9 +293,9 @@ func (m *Model) View() string {
 		detailPane := m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
 		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane)
 	}
-	help := "j/k move ^D/^U page enter select / filter [] pane tab 3/4 view tab focus v nav mouse drag"
+	help := "j/k move ^D/^U page enter select / filter [] pane tab 3/4 view tab h/l group/focus v nav mouse drag"
 	if m.width >= 90 {
-		help = "↑↓/jk move  Ctrl+D/U page  h/l focus  enter select  / filter  [] pane tab  3/4 resource view  v nav  mouse drag"
+		help = "↑↓/jk move  Ctrl+D/U page  h/l focus/group  enter select  / filter  [] pane tab  3/4 resource view  v nav  mouse drag"
 	}
 	if m.width < 90 {
 		if m.detailOnly {
@@ -718,12 +718,16 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 	case "h":
 		if m.focus == workspaceFocus {
 			m.collapseWorkspace()
+		} else if m.focus == resourceFocus && m.collapseResourceGroup() {
+			return nil
 		} else if m.focus > workspaceFocus {
 			m.changeFocus(-1)
 		}
 	case "l":
 		if m.focus == workspaceFocus {
 			return m.expandWorkspace()
+		} else if m.focus == resourceFocus && m.expandResourceGroup() {
+			return nil
 		} else {
 			m.changeFocus(1)
 		}
@@ -1003,16 +1007,16 @@ func (m *Model) resourceLines() []string {
 	lines := make([]string, len(rows))
 	for i, row := range rows {
 		if row.groupHeader {
-			marker := "-"
-			if m.collapsedResourceGroups[row.group] {
-				marker = "+"
+			marker := "+"
+			if m.expandedResourceGroups[row.group] {
+				marker = "-"
 			}
 			lines[i] = marker + " " + resourceGroupName(row.group)
 			continue
 		}
 		resource := items[row.resourceIndex]
 		if m.resourceView == groupedResourceView {
-			lines[i] = "  " + resource.Name
+			lines[i] = "    " + resource.Name
 			continue
 		}
 		lines[i] = resource.Name + " (" + resourceGroupName(resource.Group) + ")"
@@ -1050,7 +1054,7 @@ func (m *Model) resourceRows() []resourceRow {
 	var rows []resourceRow
 	for _, group := range groupNames {
 		rows = append(rows, resourceRow{group: group, groupHeader: true})
-		if m.collapsedResourceGroups[group] {
+		if !m.expandedResourceGroups[group] {
 			continue
 		}
 		for _, resourceIndex := range groups[group] {
@@ -1129,10 +1133,14 @@ func (m *Model) setResourceView(view resourceView) {
 }
 
 func (m *Model) toggleResourceGroup(group string) {
-	if m.collapsedResourceGroups == nil {
-		m.collapsedResourceGroups = make(map[string]bool)
+	if m.expandedResourceGroups[group] {
+		delete(m.expandedResourceGroups, group)
+		return
 	}
-	m.collapsedResourceGroups[group] = !m.collapsedResourceGroups[group]
+	if m.expandedResourceGroups == nil {
+		m.expandedResourceGroups = make(map[string]bool)
+	}
+	m.expandedResourceGroups[group] = true
 }
 
 func (m *Model) focusedResourceGroup() (string, bool) {
@@ -1155,10 +1163,7 @@ func (m *Model) collapseResourceGroup() bool {
 	if !ok {
 		return false
 	}
-	if m.collapsedResourceGroups == nil {
-		m.collapsedResourceGroups = make(map[string]bool)
-	}
-	m.collapsedResourceGroups[group] = true
+	delete(m.expandedResourceGroups, group)
 	return true
 }
 
@@ -1167,7 +1172,10 @@ func (m *Model) expandResourceGroup() bool {
 	if !ok {
 		return false
 	}
-	delete(m.collapsedResourceGroups, group)
+	if m.expandedResourceGroups == nil {
+		m.expandedResourceGroups = make(map[string]bool)
+	}
+	m.expandedResourceGroups[group] = true
 	return true
 }
 
