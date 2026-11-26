@@ -9,7 +9,47 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
+
+func seedPreviousInstanceSelection(model *Model) kcp.Resource {
+	resource := kcp.Resource{Name: "prior-pods", Version: "v1", Kind: "Pod"}
+	instance := unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": "v1",
+		"kind":       "Pod",
+		"metadata":   map[string]interface{}{"name": "prior-pod"},
+	}}
+	model.selectedResource = &resource
+	model.selectedInstance = &instance
+	model.instances = []unstructured.Unstructured{instance}
+	model.instanceCursor = 5
+	model.searchText = "prior-pod"
+	model.matches = []int{2}
+	model.matchIndex = 0
+	model.scroll = 4
+	model.loading = "Loading instances"
+	model.status = "previous instance error"
+	return resource
+}
+
+func assertResourceSelectionReset(t *testing.T, model *Model) {
+	t.Helper()
+	if model.selectedResource != nil || model.selectedInstance != nil || len(model.instances) != 0 {
+		t.Fatalf("group activation kept the prior resource/instance selection: resource=%#v instance=%#v instances=%d",
+			model.selectedResource, model.selectedInstance, len(model.instances))
+	}
+	if model.instanceCursor != 0 || model.searchText != "" || len(model.matches) != 0 || model.matchIndex != 0 || model.scroll != 0 {
+		t.Fatalf("group activation kept stale detail state: cursor=%d search=%q matches=%v matchIndex=%d scroll=%d",
+			model.instanceCursor, model.searchText, model.matches, model.matchIndex, model.scroll)
+	}
+	if model.loading != "" || model.status != "" {
+		t.Fatalf("group activation kept stale loading/error state: loading=%q status=%q", model.loading, model.status)
+	}
+	pane := ansi.Strip(model.renderPane(instanceFocus, "Instances", model.instanceLines(), 24, 6, false))
+	if !strings.Contains(pane, "Select a resource") {
+		t.Fatalf("Instances pane should show its unselected placeholder:\n%s", pane)
+	}
+}
 
 func TestGroupedResourceViewPreservesSelectionAndCollapsesGroups(t *testing.T) {
 	model := testModel(t)
@@ -257,6 +297,65 @@ func TestMouseGroupHeadersToggleAndResourceRowsSelect(t *testing.T) {
 	if model.selectedResource == nil || model.selectedResource.Name != "deployments" {
 		t.Fatalf("clicking a grouped resource selected %#v, want deployments", model.selectedResource)
 	}
+}
+
+func TestMouseGroupActivationClearsPreviousInstanceSelection(t *testing.T) {
+	model := testModel(t)
+	model.width = 120
+	model.height = 40
+	model.resources = []kcp.Resource{
+		{Name: "pods", Version: "v1", Kind: "Pod"},
+		{Name: "deployments", Group: "apps", Version: "v1", Kind: "Deployment"},
+	}
+	model.resourceView = groupedResourceView
+	previousResource := seedPreviousInstanceSelection(model)
+
+	layout := model.layoutForView()
+	lowerY := 1 + layout.workspaceHeight
+	bounds, ok := model.paneBoundsAt(1, lowerY+1)
+	if !ok || bounds.panel != resourceFocus {
+		t.Fatal("could not locate the API resources pane")
+	}
+	sendMouse(model, tea.MouseMsg{
+		X:      bounds.x + 2,
+		Y:      bounds.y + 2,
+		Action: tea.MouseActionPress,
+		Button: tea.MouseButtonLeft,
+	})
+	if !model.expandedResourceGroups["apps"] {
+		t.Fatal("clicking the apps heading should still expand the group")
+	}
+	assertResourceSelectionReset(t, model)
+
+	staleInstance := unstructured.Unstructured{Object: map[string]interface{}{
+		"metadata": map[string]interface{}{"name": "stale-pod"},
+	}}
+	_, cmd := model.Update(instanceResult{
+		workspace: model.activeWorkspace,
+		resource:  previousResource,
+		items:     []unstructured.Unstructured{staleInstance},
+	})
+	if cmd != nil {
+		t.Fatalf("stale instance result returned command %v", cmd)
+	}
+	assertResourceSelectionReset(t, model)
+}
+
+func TestEnterOnGroupActivationClearsPreviousInstanceSelection(t *testing.T) {
+	model := testModel(t)
+	model.resources = []kcp.Resource{
+		{Name: "pods", Version: "v1", Kind: "Pod"},
+		{Name: "deployments", Group: "apps", Version: "v1", Kind: "Deployment"},
+	}
+	model.resourceView = groupedResourceView
+	model.focus = resourceFocus
+	seedPreviousInstanceSelection(model)
+
+	model.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if !model.expandedResourceGroups[""] {
+		t.Fatal("Enter on the core heading should still expand the group")
+	}
+	assertResourceSelectionReset(t, model)
 }
 
 func TestResourceScrollingDoesNotScrollWorkspacePane(t *testing.T) {

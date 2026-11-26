@@ -254,7 +254,7 @@ func (m *Model) selectCurrent() tea.Cmd {
 		}
 		row := rows[clamp(m.resourceCursor, 0, len(rows)-1)]
 		if row.groupHeader {
-			m.toggleResourceGroup(row.group)
+			m.activateResourceGroup(row.group)
 			return nil
 		}
 		items := m.filteredResources()

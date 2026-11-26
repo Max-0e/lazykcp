@@ -107,7 +107,7 @@ func (m *Model) handleMouse(mouse tea.MouseMsg) tea.Cmd {
 		}
 		m.resourceCursor = index
 		if rows[index].groupHeader {
-			m.toggleResourceGroup(rows[index].group)
+			m.activateResourceGroup(rows[index].group)
 			return nil
 		}
 		return m.selectCurrent()

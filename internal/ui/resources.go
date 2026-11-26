@@ -177,6 +177,23 @@ func (m *Model) toggleResourceGroup(group string) {
 	m.expandedResourceGroups[group] = true
 }
 
+func (m *Model) activateResourceGroup(group string) {
+	m.selectedResource = nil
+	m.selectedInstance = nil
+	m.instances = nil
+	m.instanceCursor = 0
+	m.searching = false
+	m.searchText = ""
+	m.matches = nil
+	m.matchIndex = 0
+	m.scroll = 0
+	m.status = ""
+	if m.loading == "Loading instances" {
+		m.loading = ""
+	}
+	m.toggleResourceGroup(group)
+}
+
 func (m *Model) focusedResourceGroup() (string, bool) {
 	if m.resourceView != groupedResourceView {
 		return "", false
