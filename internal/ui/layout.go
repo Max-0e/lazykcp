@@ -129,7 +129,7 @@ func (m *Model) paneBoundsAt(x, y int) (paneBounds, bool) {
 
 	lowerY := workspace.y + workspace.height
 	if m.detailOnly {
-		detail := paneBounds{panel: detailFocus, x: 0, y: lowerY, width: m.width, height: layout.detailHeight}
+		detail := m.detailPaneBounds()
 		if containsPoint(detail, x, y) {
 			return detail, true
 		}
@@ -143,7 +143,7 @@ func (m *Model) paneBoundsAt(x, y int) (paneBounds, bool) {
 		if containsPoint(paneBounds{panel: instanceFocus, x: 0, y: instanceY, width: layout.navigationWidth, height: layout.instanceHeight}, x, y) {
 			return paneBounds{panel: instanceFocus, x: 0, y: instanceY, width: layout.navigationWidth, height: layout.instanceHeight}, true
 		}
-		detail := paneBounds{panel: detailFocus, x: layout.navigationWidth, y: lowerY, width: layout.detailWidth, height: layout.detailHeight}
+		detail := m.detailPaneBounds()
 		if containsPoint(detail, x, y) {
 			return detail, true
 		}
@@ -156,12 +156,29 @@ func (m *Model) paneBoundsAt(x, y int) (paneBounds, bool) {
 	if containsPoint(paneBounds{panel: instanceFocus, x: layout.resourceWidth, y: lowerY, width: layout.instanceWidth, height: layout.navigationHeight}, x, y) {
 		return paneBounds{panel: instanceFocus, x: layout.resourceWidth, y: lowerY, width: layout.instanceWidth, height: layout.navigationHeight}, true
 	}
-	detailY := lowerY + layout.navigationHeight
-	detail := paneBounds{panel: detailFocus, x: 0, y: detailY, width: layout.detailWidth, height: layout.detailHeight}
+	detail := m.detailPaneBounds()
 	if containsPoint(detail, x, y) {
 		return detail, true
 	}
 	return paneBounds{}, false
+}
+
+func (m *Model) detailPaneBounds() paneBounds {
+	layout := m.layoutForView()
+	bounds := paneBounds{
+		panel:  detailFocus,
+		x:      0,
+		y:      1 + layout.workspaceHeight,
+		width:  layout.detailWidth,
+		height: layout.detailHeight,
+	}
+	if !m.detailOnly && !layout.narrow {
+		bounds.x = layout.navigationWidth
+	}
+	if !m.detailOnly && layout.narrow {
+		bounds.y += layout.navigationHeight
+	}
+	return bounds
 }
 
 func containsPoint(bounds paneBounds, x, y int) bool {

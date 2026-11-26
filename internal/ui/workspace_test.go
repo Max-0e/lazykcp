@@ -26,8 +26,29 @@ func TestWorkspaceSelectionHighlightDoesNotShiftTreeRows(t *testing.T) {
 	if selected != unselected {
 		t.Fatalf("workspace selection changed row text or alignment:\nselected:\n%s\nunselected:\n%s", selected, unselected)
 	}
-	if !strings.Contains(selected, "  - team *") {
+	if !strings.Contains(selected, "  ▼ team *") {
 		t.Fatalf("selected workspace row lost its tree marker or label: %s", selected)
+	}
+}
+
+func TestWorkspaceMarkerReflectsExpansionState(t *testing.T) {
+	model := testModel(t)
+	tests := []struct {
+		name string
+		node workspaceNode
+		want string
+	}{
+		{name: "expanded", node: workspaceNode{expanded: true}, want: "▼"},
+		{name: "not loaded", node: workspaceNode{}, want: "▶"},
+		{name: "has children", node: workspaceNode{loaded: true, children: []*workspaceNode{{name: "child"}}}, want: "▶"},
+		{name: "loaded leaf", node: workspaceNode{loaded: true}, want: " "},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := model.workspaceMarker(&tt.node); got != tt.want {
+				t.Fatalf("workspace marker = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -56,12 +77,15 @@ func TestMouseClickWorkspaceMarkerAndRow(t *testing.T) {
 	if !child.expanded {
 		t.Fatal("clicking a collapsed workspace marker should expand it")
 	}
-	if !strings.HasPrefix(model.workspaceLines()[1], "  -") {
+	if !strings.HasPrefix(model.workspaceLines()[1], "  ▼") {
 		t.Fatalf("expanded workspace marker not rendered: %#v", model.workspaceLines())
 	}
 	sendMouse(model, markerClick)
 	if child.expanded {
 		t.Fatal("clicking an expanded workspace marker should collapse it")
+	}
+	if !strings.HasPrefix(model.workspaceLines()[1], "  ▶") {
+		t.Fatalf("collapsed workspace marker not rendered: %#v", model.workspaceLines())
 	}
 	command := sendMouse(model, tea.MouseMsg{
 		X:      6,

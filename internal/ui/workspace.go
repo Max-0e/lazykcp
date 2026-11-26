@@ -66,10 +66,10 @@ func (m *Model) workspaceLines() []string {
 
 func (m *Model) workspaceMarker(node *workspaceNode) string {
 	if node.expanded {
-		return "-"
+		return "▼"
 	}
 	if !node.loaded || len(node.children) > 0 {
-		return "+"
+		return "▶"
 	}
 	return " "
 }

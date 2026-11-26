@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const (
@@ -49,36 +50,46 @@ func (m *Model) View() string {
 
 	layout := m.layoutForView()
 	workspacePane := m.renderPane(workspaceFocus, "Workspaces", m.workspaceLines(), m.width, layout.workspaceHeight, m.focus == workspaceFocus)
+	detailPane := func() string {
+		title := m.detailTitle()
+		if m.terminal != nil {
+			title = "Terminal · " + m.terminal.workspace
+		}
+		return m.renderPane(detailFocus, title, m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
+	}
 	var lowerPane string
 	if m.detailOnly {
-		lowerPane = m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
+		lowerPane = detailPane()
 	} else if !layout.narrow {
 		navigationPane := lipgloss.JoinVertical(
 			lipgloss.Left,
 			m.renderPane(resourceFocus, "API resources", m.resourceLines(), layout.navigationWidth, layout.resourceHeight, m.focus == resourceFocus),
 			m.renderPane(instanceFocus, "Instances", m.instanceLines(), layout.navigationWidth, layout.instanceHeight, m.focus == instanceFocus),
 		)
-		detailPane := m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
-		lowerPane = lipgloss.JoinHorizontal(lipgloss.Top, navigationPane, detailPane)
+		lowerPane = lipgloss.JoinHorizontal(lipgloss.Top, navigationPane, detailPane())
 	} else {
 		navigationPane := lipgloss.JoinHorizontal(
 			lipgloss.Top,
 			m.renderPane(resourceFocus, "API resources", m.resourceLines(), layout.resourceWidth, layout.navigationHeight, m.focus == resourceFocus),
 			m.renderPane(instanceFocus, "Instances", m.instanceLines(), layout.instanceWidth, layout.navigationHeight, m.focus == instanceFocus),
 		)
-		detailPane := m.renderPane(detailFocus, m.detailTitle(), m.detailLines(), layout.detailWidth, layout.detailHeight, m.focus == detailFocus)
-		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane)
+		lowerPane = lipgloss.JoinVertical(lipgloss.Left, navigationPane, detailPane())
 	}
-	help := "j/k move ^D/^U page enter select / filter [] pane tab 3/4 view tab h/l group/focus v nav mouse drag"
+	help := "j/k move ^D/^U page enter select / filter [] pane tab 3/4 view tab h/l group/focus t terminal v nav mouse drag"
 	if m.width >= 90 {
-		help = "↑↓/jk move  Ctrl+D/U page  h/l focus/group  enter select  / filter  [] pane tab  3/4 resource view  v nav  mouse drag"
+		help = "↑↓/jk move  Ctrl+D/U page  h/l focus/group  enter select  / filter  [] pane tab  3/4 resource view  t terminal  v nav  mouse drag"
 	}
 	if m.width < 90 {
 		if m.detailOnly {
 			help += " (v show nav)"
 		}
 	}
-	if m.filtering {
+	if m.terminal != nil {
+		help = "Terminal focused · Ctrl+D exits to browsing"
+		if m.terminal.failure != "" {
+			help = m.terminal.failure
+		}
+	} else if m.filtering {
 		help = "Filter: /" + m.filterText + "  enter close  esc clear"
 	} else if m.searching {
 		help = "Search: /" + m.searchText + "  enter close  esc cancel"
@@ -135,12 +146,19 @@ func (m *Model) instanceLines() []string {
 func (m *Model) renderPane(panel focus, title string, lines []string, width, height int, focused bool) string {
 	innerWidth := max(1, width-2)
 	innerHeight := max(1, height-2)
-	showDetailTabs := panel == detailFocus && m.selectedInstance != nil
+	terminalPane := panel == detailFocus && m.terminal != nil
+	if terminalPane {
+		lines = m.terminalLines()
+	}
+	showDetailTabs := panel == detailFocus && !terminalPane && m.selectedInstance != nil
 	showResourceTabs := panel == resourceFocus
 	if showDetailTabs {
 		title = m.selectedInstance.GetName()
 	}
 	query := m.queryForPanel(panel)
+	if terminalPane {
+		query = ""
+	}
 	if len(lines) == 0 {
 		switch panel {
 		case resourceFocus:
@@ -160,6 +178,10 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 	}
 	selected := m.selectedLineIndex(panel)
 	start := m.paneRenderStart(panel, len(lines), innerHeight)
+	if terminalPane {
+		selected = -1
+		start = 0
+	}
 	thumbStart, thumbHeight, scrollable := scrollThumb(start, innerHeight, len(lines))
 	rows := make([]string, 0, innerHeight)
 	borderColor := lipgloss.Color("240")
@@ -198,11 +220,14 @@ func (m *Model) renderPane(panel focus, title string, lines []string, width, hei
 			line = ""
 		} else {
 			line = clip(lines[index], innerWidth)
+			if terminalPane {
+				line = ansi.Truncate(lines[index], innerWidth, "")
+			}
 		}
 		line += strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(line)))
-		if panel == detailFocus && focused && index == m.currentMatchLine() {
+		if !terminalPane && panel == detailFocus && focused && index == m.currentMatchLine() {
 			line = lipgloss.NewStyle().Background(lipgloss.Color("220")).Foreground(lipgloss.Color("0")).Render(line)
-		} else if panel == detailFocus && m.detailView == overviewDetailView && index < len(lines) && overviewSectionHeading(lines[index]) {
+		} else if !terminalPane && panel == detailFocus && m.detailView == overviewDetailView && index < len(lines) && overviewSectionHeading(lines[index]) {
 			line = lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true).Render(line)
 		} else if panel != detailFocus && index == selected {
 			if focused {

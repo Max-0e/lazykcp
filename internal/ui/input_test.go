@@ -101,3 +101,41 @@ func TestKeyboardEnterOnInstanceFocusesDetails(t *testing.T) {
 		t.Fatalf("keyboard instance activation state = focus %v, instance %#v; want details focus and selected instance", model.focus, model.selectedInstance)
 	}
 }
+
+func TestDetailBracketsCycleThroughOverviewJSONYAML(t *testing.T) {
+	model := testModel(t)
+	model.focus = detailFocus
+
+	key := func(r rune) {
+		t.Helper()
+		model.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	}
+
+	if model.detailView != overviewDetailView {
+		t.Fatalf("initial detail view = %d, want Overview", model.detailView)
+	}
+	key(']')
+	if model.detailView != jsonDetailView {
+		t.Fatalf("] from Overview selected view %d, want JSON", model.detailView)
+	}
+	key(']')
+	if model.detailView != yamlDetailView {
+		t.Fatalf("] from JSON selected view %d, want YAML", model.detailView)
+	}
+	key(']')
+	if model.detailView != overviewDetailView {
+		t.Fatalf("] from YAML selected view %d, want wrapped Overview", model.detailView)
+	}
+	key('[')
+	if model.detailView != yamlDetailView {
+		t.Fatalf("[ from Overview selected view %d, want wrapped YAML", model.detailView)
+	}
+	key('[')
+	if model.detailView != jsonDetailView {
+		t.Fatalf("[ from YAML selected view %d, want JSON", model.detailView)
+	}
+	key('[')
+	if model.detailView != overviewDetailView {
+		t.Fatalf("[ from JSON selected view %d, want Overview", model.detailView)
+	}
+}

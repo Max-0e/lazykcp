@@ -5,6 +5,10 @@ import (
 )
 
 func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
+	if m.terminal != nil {
+		m.handleTerminalKey(key)
+		return nil
+	}
 	if m.filtering {
 		return m.handleFilterKey(key)
 	}
@@ -100,14 +104,14 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 		case resourceFocus:
 			m.setResourceView(flatResourceView)
 		case detailFocus:
-			m.setDetailTab(jsonDetailView)
+			m.cycleDetailTab(-1)
 		}
 	case "]":
 		switch m.focus {
 		case resourceFocus:
 			m.setResourceView(groupedResourceView)
 		case detailFocus:
-			m.setDetailTab(yamlDetailView)
+			m.cycleDetailTab(1)
 		}
 	case "1":
 		m.setDetailTab(jsonDetailView)
@@ -116,6 +120,10 @@ func (m *Model) handleKey(key tea.KeyMsg) tea.Cmd {
 	case "o":
 		if m.focus == detailFocus {
 			m.setDetailTab(overviewDetailView)
+		}
+	case "t":
+		if m.focus == workspaceFocus {
+			return m.startTerminal()
 		}
 	case "3":
 		if m.focus == resourceFocus {

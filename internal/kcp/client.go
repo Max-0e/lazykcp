@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 
@@ -14,6 +15,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 const workspaceGVR = "tenancy.kcp.io/v1alpha1/workspaces"
@@ -31,8 +33,10 @@ func (r Resource) GVR() schema.GroupVersionResource {
 }
 
 type Client struct {
-	config   *rest.Config
-	rootPath string
+	config                *rest.Config
+	rootPath              string
+	kubeconfigPath        string
+	insecureSkipTLSVerify bool
 }
 
 func NewClient(kubeconfigPath string, insecureSkipTLSVerify bool) (*Client, error) {
@@ -49,11 +53,70 @@ func NewClient(kubeconfigPath string, insecureSkipTLSVerify bool) (*Client, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Client{config: config, rootPath: rootPath}, nil
+	return &Client{
+		config:                config,
+		rootPath:              rootPath,
+		kubeconfigPath:        kubeconfigPath,
+		insecureSkipTLSVerify: insecureSkipTLSVerify,
+	}, nil
 }
 
 func (c *Client) RootPath() string {
 	return c.rootPath
+}
+
+func (c *Client) CreateWorkspaceKubeconfig(workspacePath string) (string, func() error, error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if c.kubeconfigPath != "" {
+		rules.ExplicitPath = c.kubeconfigPath
+	}
+	config, err := rules.Load()
+	if err != nil {
+		return "", nil, fmt.Errorf("reload kubeconfig for terminal: %w", err)
+	}
+	config = config.DeepCopy()
+	if err := clientcmdapi.MinifyConfig(config); err != nil {
+		return "", nil, fmt.Errorf("minify kubeconfig for terminal: %w", err)
+	}
+
+	context := config.Contexts[config.CurrentContext]
+	if context == nil {
+		return "", nil, fmt.Errorf("kubeconfig context %q is missing", config.CurrentContext)
+	}
+	cluster := config.Clusters[context.Cluster]
+	if cluster == nil {
+		return "", nil, fmt.Errorf("kubeconfig cluster %q is missing", context.Cluster)
+	}
+	cluster.Server = c.configForWorkspace(workspacePath).Host
+	cluster.InsecureSkipTLSVerify = c.insecureSkipTLSVerify
+	if c.insecureSkipTLSVerify {
+		cluster.CertificateAuthority = ""
+		cluster.CertificateAuthorityData = nil
+	}
+
+	file, err := os.CreateTemp("", "lazykcp-kubeconfig-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("create temporary kubeconfig for terminal: %w", err)
+	}
+	path := file.Name()
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return "", nil, fmt.Errorf("close temporary kubeconfig: %w", err)
+	}
+	if err := clientcmd.WriteToFile(*config, path); err != nil {
+		_ = os.Remove(path)
+		return "", nil, fmt.Errorf("write temporary kubeconfig: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		_ = os.Remove(path)
+		return "", nil, fmt.Errorf("secure temporary kubeconfig: %w", err)
+	}
+	return path, func() error {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove temporary kubeconfig: %w", err)
+		}
+		return nil
+	}, nil
 }
 
 func (c *Client) ListWorkspaces(ctx context.Context, parentPath string) ([]*unstructured.Unstructured, error) {

@@ -21,9 +21,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	program := tea.NewProgram(ui.NewModel(client), tea.WithAltScreen(), tea.WithMouseCellMotion())
-	if _, err := program.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	model := ui.NewModel(client)
+	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	_, runErr := program.Run()
+	cleanupErr := model.Close()
+	if runErr != nil {
+		fmt.Fprintln(os.Stderr, runErr)
+	}
+	if cleanupErr != nil {
+		fmt.Fprintln(os.Stderr, cleanupErr)
+	}
+	if runErr != nil || cleanupErr != nil {
 		os.Exit(1)
 	}
 }

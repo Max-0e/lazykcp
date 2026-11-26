@@ -41,9 +41,9 @@ func (m *Model) resourceLines() []string {
 	lines := make([]string, len(rows))
 	for i, row := range rows {
 		if row.groupHeader {
-			marker := "+"
+			marker := "▶"
 			if m.expandedResourceGroups[row.group] {
-				marker = "-"
+				marker = "▼"
 			}
 			lines[i] = marker + " " + resourceGroupName(row.group)
 			continue

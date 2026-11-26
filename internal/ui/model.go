@@ -65,6 +65,9 @@ type Model struct {
 	paneSizes              paneSizes
 	dragDivider            divider
 	dragOffset             int
+	terminal               *terminalSession
+	terminalSequence       uint64
+	terminalReturnFocus    focus
 
 	width   int
 	height  int
@@ -84,9 +87,9 @@ func NewModel(client *kcp.Client) *Model {
 		root:            root,
 		activeWorkspace: rootPath,
 		workspaceCursor: rootPath,
-		focus:            workspaceFocus,
-		detailView:       overviewDetailView,
-		loading:          "Loading workspaces",
+		focus:           workspaceFocus,
+		detailView:      overviewDetailView,
+		loading:         "Loading workspaces",
 	}
 }
 
@@ -99,6 +102,9 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.dragDivider = noDivider
+		if m.terminal != nil {
+			m.resizeTerminal()
+		}
 		return m, nil
 	case workspaceResult:
 		node := m.findWorkspace(msg.parent)
@@ -157,9 +163,19 @@ func (m *Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.selectedInstance = nil
 		m.status = ""
 		return m, nil
+	case terminalOutputMsg:
+		return m, m.handleTerminalOutput(msg)
+	case terminalExitMsg:
+		return m, m.handleTerminalExit(msg)
+	case terminalInputDoneMsg:
+		return m, m.handleTerminalInputDone(msg)
 	case tea.KeyMsg:
 		return m, m.handleKey(msg)
 	case tea.MouseMsg:
+		if m.terminal != nil {
+			m.handleTerminalMouse(msg)
+			return m, nil
+		}
 		return m, m.handleMouse(msg)
 	}
 	return m, nil

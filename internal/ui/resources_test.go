@@ -64,7 +64,7 @@ func TestGroupedResourceViewPreservesSelectionAndCollapsesGroups(t *testing.T) {
 	model.focus = resourceFocus
 	model.setResourceView(groupedResourceView)
 
-	want := "+ core\n+ apps\n+ batch"
+	want := "▶ core\n▶ apps\n▶ batch"
 	if got := strings.Join(model.resourceLines(), "\n"); got != want {
 		t.Fatalf("grouped resource rows =\n%s\nwant:\n%s", got, want)
 	}
@@ -76,11 +76,11 @@ func TestGroupedResourceViewPreservesSelectionAndCollapsesGroups(t *testing.T) {
 	}
 
 	model.filters[resourceFocus] = "core"
-	if got, want := strings.Join(model.resourceLines(), "\n"), "+ core"; got != want {
+	if got, want := strings.Join(model.resourceLines(), "\n"), "▶ core"; got != want {
 		t.Fatalf("filtering by the core API group =\n%s\nwant:\n%s", got, want)
 	}
 	model.filters[resourceFocus] = "apps"
-	if got, want := strings.Join(model.resourceLines(), "\n"), "+ apps"; got != want {
+	if got, want := strings.Join(model.resourceLines(), "\n"), "▶ apps"; got != want {
 		t.Fatalf("filtering by an API group =\n%s\nwant:\n%s", got, want)
 	}
 	model.filters[resourceFocus] = ""
@@ -106,7 +106,7 @@ func TestGroupedResourceViewPreservesSelectionAndCollapsesGroups(t *testing.T) {
 	if !model.expandedResourceGroups["apps"] {
 		t.Fatal("l on a collapsed group heading should expand it again")
 	}
-	want = "+ core\n- apps\n    deployments\n    replicasets\n+ batch"
+	want = "▶ core\n▼ apps\n    deployments\n    replicasets\n▶ batch"
 	if got := strings.Join(model.resourceLines(), "\n"); got != want {
 		t.Fatalf("expanded grouped resource rows =\n%s\nwant:\n%s", got, want)
 	}
@@ -194,17 +194,25 @@ func TestResourceViewTabsAndScopedBracketShortcuts(t *testing.T) {
 
 	model.focus = detailFocus
 	sendKey(']')
-	if model.detailView != yamlDetailView || model.resourceView != flatResourceView {
-		t.Fatalf("] in Details should select YAML only, got detail view %d and resource view %d", model.detailView, model.resourceView)
+	if model.detailView != jsonDetailView || model.resourceView != flatResourceView {
+		t.Fatalf("] in Details should advance from Overview to JSON only, got detail view %d and resource view %d", model.detailView, model.resourceView)
 	}
 	sendKey('[')
-	if model.detailView != jsonDetailView || model.resourceView != flatResourceView {
-		t.Fatalf("[ in Details should select JSON only, got detail view %d and resource view %d", model.detailView, model.resourceView)
+	if model.detailView != overviewDetailView || model.resourceView != flatResourceView {
+		t.Fatalf("[ in Details should move back from JSON to Overview only, got detail view %d and resource view %d", model.detailView, model.resourceView)
+	}
+	sendKey('[')
+	if model.detailView != yamlDetailView {
+		t.Fatal("[ in Details should wrap backward from Overview to YAML")
+	}
+	sendKey(']')
+	if model.detailView != overviewDetailView {
+		t.Fatal("] in Details should wrap forward from YAML to Overview")
 	}
 
 	model.focus = workspaceFocus
 	sendKey(']')
-	if model.detailView != jsonDetailView || model.resourceView != flatResourceView {
+	if model.detailView != overviewDetailView || model.resourceView != flatResourceView {
 		t.Fatal("bracket shortcuts outside Resources and Details should not change either view")
 	}
 	sendKey('2')
@@ -281,7 +289,7 @@ func TestMouseGroupHeadersToggleAndResourceRowsSelect(t *testing.T) {
 		})
 	}
 
-	if got, want := strings.Join(model.resourceLines(), "\n"), "+ core\n+ apps"; got != want {
+	if got, want := strings.Join(model.resourceLines(), "\n"), "▶ core\n▶ apps"; got != want {
 		t.Fatalf("groups should start collapsed, got %q want %q", got, want)
 	}
 	clickRow(1)

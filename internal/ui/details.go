@@ -19,6 +19,12 @@ const (
 	yamlDetailView
 )
 
+func (m *Model) cycleDetailTab(direction int) {
+	tabCount := int(yamlDetailView) + 1
+	next := (int(m.detailView) + direction + tabCount) % tabCount
+	m.setDetailTab(detailView(next))
+}
+
 func (m *Model) detailTitle() string {
 	if m.selectedInstance == nil {
 		return "Resource detail"

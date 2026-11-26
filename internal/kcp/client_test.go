@@ -3,10 +3,13 @@ package kcp
 import (
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 func TestNewClientTLSVerificationDefaultsAndOptIn(t *testing.T) {
@@ -99,5 +102,144 @@ func TestConfigForWorkspaceReplacesClusterPath(t *testing.T) {
 	}
 	if client.config.Host != "https://kcp.example/proxy/clusters/root" {
 		t.Fatalf("original config was mutated: %q", client.config.Host)
+	}
+}
+
+func TestCreateWorkspaceKubeconfigPreservesAuthAndSecuresTemporaryFile(t *testing.T) {
+	dir := t.TempDir()
+	caPath := filepath.Join(dir, "ca.crt")
+	if err := os.WriteFile(caPath, []byte("test CA"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "config")
+	config := `apiVersion: v1
+kind: Config
+clusters:
+- name: kcp
+  cluster:
+    server: https://kcp.example/prefix/clusters/root
+    certificate-authority: ca.crt
+users:
+- name: admin
+  user:
+    exec:
+      apiVersion: client.authentication.k8s.io/v1
+      command: /usr/local/bin/kcp-auth
+      args: ["--profile", "admin"]
+      interactiveMode: Never
+contexts:
+- name: admin@kcp
+  context:
+    cluster: kcp
+    user: admin
+current-context: admin@kcp
+`
+	if err := os.WriteFile(configPath, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	client, err := NewClient(configPath, false)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	path, cleanup, err := client.CreateWorkspaceKubeconfig("root:org:team")
+	if err != nil {
+		t.Fatalf("create workspace kubeconfig: %v", err)
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("cleanup workspace kubeconfig: %v", err)
+		}
+	}()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat generated kubeconfig: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0600 {
+		t.Fatalf("temporary kubeconfig permissions = %04o, want 0600", got)
+	}
+
+	generated, err := clientcmd.LoadFromFile(path)
+	if err != nil {
+		t.Fatalf("load generated kubeconfig: %v", err)
+	}
+	if generated.CurrentContext != "admin@kcp" {
+		t.Fatalf("current context = %q, want admin@kcp", generated.CurrentContext)
+	}
+	context := generated.Contexts[generated.CurrentContext]
+	if context == nil || context.Cluster != "kcp" || context.AuthInfo != "admin" {
+		t.Fatalf("generated context = %#v, want the original context and auth info", context)
+	}
+	cluster := generated.Clusters["kcp"]
+	if cluster == nil || cluster.Server != "https://kcp.example/prefix/clusters/root:org:team" {
+		t.Fatalf("generated cluster = %#v, want selected workspace endpoint", cluster)
+	}
+	if cluster.InsecureSkipTLSVerify || cluster.CertificateAuthority != caPath {
+		t.Fatalf("generated TLS configuration = %#v, want TLS verification and resolved CA path", cluster)
+	}
+	auth := generated.AuthInfos["admin"]
+	if auth == nil || auth.Exec == nil || auth.Exec.Command != "/usr/local/bin/kcp-auth" ||
+		strings.Join(auth.Exec.Args, " ") != "--profile admin" {
+		t.Fatalf("generated auth info = %#v, want original exec authentication", auth)
+	}
+	if got, err := os.ReadFile(configPath); err != nil || !strings.Contains(string(got), "/clusters/root\n") {
+		t.Fatalf("original kubeconfig changed: err=%v content=%s", err, got)
+	}
+
+	if err := cleanup(); err != nil {
+		t.Fatalf("remove generated kubeconfig: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("temporary kubeconfig still exists after cleanup: %v", err)
+	}
+}
+
+func TestCreateWorkspaceKubeconfigCarriesTLSBypass(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	config := `apiVersion: v1
+kind: Config
+clusters:
+- name: kcp
+  cluster:
+    server: https://kcp.example/clusters/root
+    certificate-authority-data: Y2VydA==
+users:
+- name: admin
+  user: {}
+contexts:
+- name: admin@kcp
+  context:
+    cluster: kcp
+    user: admin
+current-context: admin@kcp
+`
+	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewClient(path, true)
+	if err != nil {
+		t.Fatalf("create client: %v", err)
+	}
+	generatedPath, cleanup, err := client.CreateWorkspaceKubeconfig("root")
+	if err != nil {
+		t.Fatalf("create workspace kubeconfig: %v", err)
+	}
+	defer func() {
+		if err := cleanup(); err != nil {
+			t.Errorf("cleanup workspace kubeconfig: %v", err)
+		}
+	}()
+
+	generated, err := clientcmd.LoadFromFile(generatedPath)
+	if err != nil {
+		t.Fatalf("load generated kubeconfig: %v", err)
+	}
+	cluster := generated.Clusters["kcp"]
+	if cluster == nil || !cluster.InsecureSkipTLSVerify {
+		t.Fatalf("generated cluster should retain explicit TLS bypass: %#v", cluster)
+	}
+	if cluster.CertificateAuthority != "" || len(cluster.CertificateAuthorityData) != 0 {
+		t.Fatalf("generated TLS bypass retained CA roots: %#v", cluster)
 	}
 }
