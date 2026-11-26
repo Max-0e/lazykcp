@@ -131,11 +131,52 @@ func (m *Model) terminalLines() []string {
 	if m.terminal == nil {
 		return nil
 	}
-	rendered := strings.TrimSuffix(m.terminal.emulator.Render(), "\n")
+	rendered := strings.TrimSuffix(terminalScreenBuffer(m.terminal.emulator).Render(), "\n")
 	if rendered == "" {
 		return nil
 	}
 	return strings.Split(rendered, "\n")
+}
+
+func terminalScreenBuffer(emulator *vt.Emulator) uv.ScreenBuffer {
+	buffer := uv.NewScreenBuffer(emulator.Width(), emulator.Height())
+	emulator.Draw(buffer, buffer.Bounds())
+	if emulator.CursorHidden() {
+		return buffer
+	}
+
+	position := emulator.CursorPosition()
+	if position.X < 0 || position.X >= buffer.Width() || position.Y < 0 || position.Y >= buffer.Height() {
+		return buffer
+	}
+	cell := buffer.CellAt(position.X, position.Y)
+	if cell == nil {
+		return buffer
+	}
+	cell = cell.Clone()
+	cursorStyle, _ := emulator.CursorStyle()
+	switch cursorStyle {
+	case vt.CursorUnderline:
+		cell.Style.Underline = uv.UnderlineSingle
+	case vt.CursorBar:
+		coveredWidth := max(1, cell.Width)
+		cell.Content = "▏"
+		cell.Width = 1
+		if color := emulator.CursorColor(); color != nil {
+			cell.Style.Fg = color
+		}
+		buffer.SetCell(position.X, position.Y, cell)
+		for offset := 1; offset < coveredWidth && position.X+offset < buffer.Width(); offset++ {
+			blank := uv.NewCell(buffer.WidthMethod(), " ")
+			blank.Style = cell.Style
+			buffer.SetCell(position.X+offset, position.Y, blank)
+		}
+		return buffer
+	default:
+		cell.Style.Attrs |= uv.AttrReverse
+	}
+	buffer.SetCell(position.X, position.Y, cell)
+	return buffer
 }
 
 func readTerminalOutput(session *terminalSession) tea.Cmd {
@@ -418,6 +459,9 @@ func (m *Model) Close() error {
 		if err := session.command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			closeErrors = append(closeErrors, fmt.Errorf("stop terminal shell: %w", err))
 		}
+	}
+	if err := session.pty.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		closeErrors = append(closeErrors, fmt.Errorf("close terminal PTY: %w", err))
 	}
 	session.wait()
 	m.focus = m.terminalReturnFocus

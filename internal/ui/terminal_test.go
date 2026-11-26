@@ -10,6 +10,7 @@ import (
 	"github.com/Max-0e/lazykcp/internal/kcp"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/vt"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -170,6 +171,17 @@ func TestTerminalUsesDetailsPaneAndKeepsBrowserVisible(t *testing.T) {
 	if start == nil {
 		t.Fatal("terminal start did not return asynchronous I/O commands")
 	}
+	size := model.terminalPTYSize()
+	_, _ = model.terminal.emulator.Write([]byte(fmt.Sprintf("\x1b[%d;%dH\x1b[2 q", size.Rows, size.Cols)))
+	position := model.terminal.emulator.CursorPosition()
+	if position.X != int(size.Cols)-1 || position.Y != int(size.Rows)-1 {
+		t.Fatalf("terminal cursor at pane edge = (%d, %d), want (%d, %d)",
+			position.X, position.Y, int(size.Cols)-1, int(size.Rows)-1)
+	}
+	if got := lipgloss.Width(ansi.Strip(model.View())); got != model.width {
+		t.Fatalf("edge cursor made terminal view exceed width: %d, want %d", got, model.width)
+	}
+
 	model.Update(tea.WindowSizeMsg{Width: 60, Height: 24})
 	narrow := ansi.Strip(model.View())
 	for _, visible := range []string{"Workspaces", "API resource", "Instances", "Terminal · root"} {
@@ -182,6 +194,12 @@ func TestTerminalUsesDetailsPaneAndKeepsBrowserVisible(t *testing.T) {
 	}
 	if got := lipgloss.Height(narrow); got != 24 {
 		t.Fatalf("narrow terminal browser view height = %d, want 24", got)
+	}
+	size = model.terminalPTYSize()
+	position = model.terminal.emulator.CursorPosition()
+	if position.X >= int(size.Cols) || position.Y >= int(size.Rows) {
+		t.Fatalf("cursor escaped resized terminal pane at (%d, %d) for %dx%d",
+			position.X, position.Y, size.Cols, size.Rows)
 	}
 	if err := model.Close(); err != nil {
 		t.Fatalf("close terminal during application shutdown: %v", err)
@@ -262,6 +280,89 @@ func TestTerminalMouseCoordinatesArePaneLocal(t *testing.T) {
 		if _, ok := terminalPaneMouseMessage(bounds, tea.MouseMsg{X: point[0], Y: point[1]}); ok {
 			t.Fatalf("mouse event outside terminal content at (%d, %d) was accepted", point[0], point[1])
 		}
+	}
+}
+
+func TestTerminalScreenBufferRendersVisibleCursorStyles(t *testing.T) {
+	tests := []struct {
+		name        string
+		sequence    string
+		wantStyle   vt.CursorStyle
+		wantContent string
+		wantAttr    uint8
+		wantLine    uv.Underline
+	}{
+		{name: "block", sequence: "\x1b[2 q", wantStyle: vt.CursorBlock, wantAttr: uv.AttrReverse},
+		{name: "underline", sequence: "\x1b[4 q", wantStyle: vt.CursorUnderline, wantLine: uv.UnderlineSingle},
+		{name: "bar", sequence: "\x1b[6 q", wantStyle: vt.CursorBar, wantContent: "▏"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			emulator := vt.NewEmulator(8, 3)
+			defer emulator.Close()
+			_, _ = emulator.Write([]byte("abcdefgh\x1b[2;3H" + tt.sequence))
+
+			position := emulator.CursorPosition()
+			if position.X != 2 || position.Y != 1 {
+				t.Fatalf("cursor position = (%d, %d), want (2, 1)", position.X, position.Y)
+			}
+			style, _ := emulator.CursorStyle()
+			if style != tt.wantStyle {
+				t.Fatalf("cursor style = %v, want %v", style, tt.wantStyle)
+			}
+			sourceCell := emulator.CellAt(position.X, position.Y).Clone()
+			buffer := terminalScreenBuffer(emulator)
+			got := buffer.CellAt(position.X, position.Y)
+			if got == nil {
+				t.Fatal("cursor cell is missing from the rendered buffer")
+			}
+			if tt.wantAttr != 0 && got.Style.Attrs&tt.wantAttr == 0 {
+				t.Fatalf("block cursor attributes = %b, want reverse-video bit %b", got.Style.Attrs, tt.wantAttr)
+			}
+			if tt.wantLine != uv.UnderlineNone && got.Style.Underline != tt.wantLine {
+				t.Fatalf("underline cursor style = %v, want %v", got.Style.Underline, tt.wantLine)
+			}
+			if tt.wantContent != "" && got.Content != tt.wantContent {
+				t.Fatalf("bar cursor content = %q, want %q", got.Content, tt.wantContent)
+			}
+			if !emulator.CellAt(position.X, position.Y).Equal(sourceCell) {
+				t.Fatal("drawing the cursor mutated the emulator's screen buffer")
+			}
+		})
+	}
+}
+
+func TestTerminalScreenBufferHonorsHiddenCursorAndResizeBounds(t *testing.T) {
+	emulator := vt.NewEmulator(8, 3)
+	defer emulator.Close()
+	_, _ = emulator.Write([]byte("abcdefgh\x1b[2;3H\x1b[2 q"))
+
+	position := emulator.CursorPosition()
+	_, _ = emulator.Write([]byte("\x1b[?25l"))
+	if !emulator.CursorHidden() {
+		t.Fatal("test sequence did not hide the VT cursor")
+	}
+	base := uv.NewScreenBuffer(emulator.Width(), emulator.Height())
+	emulator.Draw(base, base.Bounds())
+	before := base.CellAt(position.X, position.Y).Clone()
+	hidden := terminalScreenBuffer(emulator).CellAt(position.X, position.Y)
+	if hidden == nil || !hidden.Equal(before) {
+		t.Fatalf("hidden cursor altered its screen cell: got %#v, want %#v", hidden, before)
+	}
+
+	_, _ = emulator.Write([]byte("\x1b[?25h"))
+	emulator.Resize(4, 2)
+	buffer := terminalScreenBuffer(emulator)
+	position = emulator.CursorPosition()
+	if buffer.Width() != 4 || buffer.Height() != 2 {
+		t.Fatalf("resized cursor buffer = %dx%d, want 4x2", buffer.Width(), buffer.Height())
+	}
+	if position.X < 0 || position.X >= buffer.Width() || position.Y < 0 || position.Y >= buffer.Height() {
+		t.Fatalf("resized cursor position (%d, %d) escaped the rendered buffer", position.X, position.Y)
+	}
+	cell := buffer.CellAt(position.X, position.Y)
+	if cell == nil || cell.Style.Attrs&uv.AttrReverse == 0 {
+		t.Fatalf("resized block cursor was not drawn at its current position (%d, %d): %#v", position.X, position.Y, cell)
 	}
 }
 
