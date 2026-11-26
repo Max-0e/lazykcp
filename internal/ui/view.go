@@ -85,7 +85,7 @@ func (m *Model) View() string {
 		}
 	}
 	if m.terminal != nil {
-		help = "Terminal focused · Ctrl+D exits to browsing"
+		help = "Terminal focused · Ctrl+D exits to browser"
 		if m.terminal.failure != "" {
 			help = m.terminal.failure
 		}
@@ -102,6 +102,16 @@ func (m *Model) View() string {
 	return header + "\n" +
 		lipgloss.JoinVertical(lipgloss.Left, workspacePane, lowerPane) + "\n" +
 		lipgloss.NewStyle().Foreground(lipgloss.Color("241")).Render(help)
+}
+
+func terminalWelcomeHint(workspace string, width int) string {
+	prefix := "Welcome to "
+	suffix := " · Ctrl+D exits to browser"
+	workspaceWidth := width - lipgloss.Width(prefix) - lipgloss.Width(suffix)
+	if workspaceWidth <= 0 {
+		return clip(suffix, width)
+	}
+	return prefix + clip(workspace, workspaceWidth) + suffix
 }
 
 func (m *Model) linesForPanel(panel focus) []string {

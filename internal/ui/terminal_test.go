@@ -151,6 +151,14 @@ func TestTerminalUsesDetailsPaneAndKeepsBrowserVisible(t *testing.T) {
 			t.Fatalf("browser/terminal layout is missing %q:\n%s", visible, rendered)
 		}
 	}
+	terminalLines := model.terminalLines()
+	if len(terminalLines) == 0 || !strings.Contains(terminalLines[0], "Welcome to root") ||
+		!strings.Contains(terminalLines[0], "Ctrl+D exits to browser") {
+		t.Fatalf("terminal welcome hint is missing from terminal content: %#v", terminalLines)
+	}
+	if strings.Count(rendered, "Welcome to root") != 1 {
+		t.Fatalf("terminal welcome hint should appear only once inside the terminal pane:\n%s", rendered)
+	}
 	for _, visible := range []string{"pods", "selected-pod"} {
 		if !strings.Contains(rendered, visible) {
 			t.Fatalf("terminal pane hid browser item %q:\n%s", visible, rendered)
@@ -224,8 +232,8 @@ func TestTerminalStartFailureIsVisibleInBrowser(t *testing.T) {
 
 func TestTerminalPTYSizeAndEnvironment(t *testing.T) {
 	size := terminalPTYSize(120, 40)
-	if size.Cols != 118 || size.Rows != 38 {
-		t.Fatalf("terminal PTY size = %dx%d, want pane interior 118x38", size.Cols, size.Rows)
+	if size.Cols != 118 || size.Rows != 37 {
+		t.Fatalf("terminal PTY size = %dx%d, want shell viewport 118x37 beneath the welcome row", size.Cols, size.Rows)
 	}
 	if got := terminalPTYSize(0, 0); got.Cols != 1 || got.Rows != 1 {
 		t.Fatalf("minimum PTY size = %dx%d, want 1x1", got.Cols, got.Rows)
@@ -263,8 +271,8 @@ func TestTerminalPTYSizeTracksResponsiveDetailsPane(t *testing.T) {
 			if got, want := int(size.Cols), bounds.width-2; got != want || got != tt.wantColumns {
 				t.Fatalf("terminal columns = %d, want %d (detail pane width %d)", got, tt.wantColumns, bounds.width)
 			}
-			if got, want := int(size.Rows), bounds.height-2; got != want {
-				t.Fatalf("terminal rows = %d, want %d (detail pane height %d)", got, want, bounds.height)
+			if got, want := int(size.Rows), bounds.height-terminalPaneBorderSize-terminalPaneWelcomeRows; got != want {
+				t.Fatalf("terminal rows = %d, want %d below the welcome row (detail pane height %d)", got, want, bounds.height)
 			}
 		})
 	}
@@ -280,6 +288,16 @@ func TestTerminalMouseCoordinatesArePaneLocal(t *testing.T) {
 		if _, ok := terminalPaneMouseMessage(bounds, tea.MouseMsg{X: point[0], Y: point[1]}); ok {
 			t.Fatalf("mouse event outside terminal content at (%d, %d) was accepted", point[0], point[1])
 		}
+	}
+}
+
+func TestTerminalWelcomeHintKeepsExitGuidanceVisibleWhenClipped(t *testing.T) {
+	hint := terminalWelcomeHint("root:org:team:with:a:very:long:workspace:path", 40)
+	if !strings.Contains(hint, "Welcome to ") || !strings.Contains(hint, "Ctrl+D exits to browser") {
+		t.Fatalf("clipped terminal welcome hint lost its greeting or exit guidance: %q", hint)
+	}
+	if got := lipgloss.Width(hint); got > 40 {
+		t.Fatalf("terminal welcome hint width = %d, exceeds available width 40", got)
 	}
 }
 

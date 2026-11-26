@@ -17,6 +17,7 @@ import (
 )
 
 const terminalPaneBorderSize = 2
+const terminalPaneWelcomeRows = 1
 
 type terminalSession struct {
 	id             uint64
@@ -118,7 +119,7 @@ func terminalPTYSize(width, height int) *pty.Winsize {
 	maxDimension := int(^uint16(0))
 	return &pty.Winsize{
 		Cols: uint16(clamp(width-terminalPaneBorderSize, 1, maxDimension)),
-		Rows: uint16(clamp(height-terminalPaneBorderSize, 1, maxDimension)),
+		Rows: uint16(clamp(height-terminalPaneBorderSize-terminalPaneWelcomeRows, 1, maxDimension)),
 	}
 }
 
@@ -132,10 +133,11 @@ func (m *Model) terminalLines() []string {
 		return nil
 	}
 	rendered := strings.TrimSuffix(terminalScreenBuffer(m.terminal.emulator).Render(), "\n")
-	if rendered == "" {
-		return nil
+	lines := []string{terminalWelcomeHint(m.terminal.workspace, m.terminal.emulator.Width())}
+	if rendered != "" {
+		lines = append(lines, strings.Split(rendered, "\n")...)
 	}
-	return strings.Split(rendered, "\n")
+	return lines
 }
 
 func terminalScreenBuffer(emulator *vt.Emulator) uv.ScreenBuffer {
